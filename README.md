@@ -1,3 +1,5 @@
+<img src="Docs/icon.png" alt="RoomCurve" width="128" align="left" hspace="16" vspace="4">
+
 # RoomCurve
 
 An open-source iOS app for tuning audio systems: measure your room with your phone, see how it
@@ -48,6 +50,12 @@ null — which flattens the one seat you measured from and makes every other sea
 ## Building
 
 Requires Xcode 26 or later, iOS 17+.
+
+> **If you re-export the icon from Icon Composer** and the build fails with
+> `Could not open "RoomCurve.icon"` and a nil-insertion exception, delete the top-level
+> `"features"` key from `RoomCurve/RoomCurve.icon/icon.json`. Beta versions of Icon Composer
+> write schema keys the released `actool` cannot parse. The per-group `refractivity` setting is
+> separate and can stay — the icon renders identically without the top-level declaration.
 
 ```sh
 swift test --package-path RoomCurveKit     # 80 tests, about a second, no simulator needed
