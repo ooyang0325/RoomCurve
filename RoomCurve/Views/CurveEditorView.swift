@@ -17,6 +17,8 @@ struct CurveEditorView: View {
     @State private var showNew = false
     @State private var newName = ""
     @State private var confirmDelete = false
+    @State private var confirmDiscard = false
+    @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// A tap waiting to see whether a second one follows it.
@@ -35,7 +37,18 @@ struct CurveEditorView: View {
         }
         .navigationTitle("Curve Editor")
         .navigationBarTitleDisplayMode(.inline)
+        // Hiding the system button also disables the edge swipe, which would otherwise be a
+        // way to leave that skips the warning entirely.
+        .navigationBarBackButtonHidden(hasChanges)
         .toolbar {
+            if hasChanges {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { confirmDiscard = true } label: {
+                        Image(systemName: "chevron.backward")
+                    }
+                    .accessibilityLabel("Back")
+                }
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
                     ForEach(store.targetCurves) { candidate in
@@ -67,6 +80,14 @@ struct CurveEditorView: View {
                 ])
                 original = nil
             }
+        }
+        .confirmationDialog("You have unsaved changes", isPresented: $confirmDiscard,
+                            titleVisibility: .visible) {
+            Button("Save and close") { save(); dismiss() }
+            Button("Discard changes", role: .destructive) { dismiss() }
+            Button("Keep editing", role: .cancel) {}
+        } message: {
+            Text("\(curve?.name ?? "This curve") has been edited but not saved.")
         }
         .confirmationDialog("Delete this curve?", isPresented: $confirmDelete,
                             titleVisibility: .visible) {
@@ -124,6 +145,7 @@ struct CurveEditorView: View {
                 .chartOverlay { proxy in
                     overlay(proxy: proxy, geometry: geometry)
                 }
+                .overlay(alignment: .topLeading) { readout }
             }
         }
         .padding(8)
@@ -135,6 +157,35 @@ struct CurveEditorView: View {
     /// simply a drag that never moved — so any `onTapGesture` attached alongside it never
     /// fires. Rather than fight that, the decision is made on release: if the finger moved, it
     /// was a drag; if it did not, it was a tap, and the tap counting happens here too.
+    /// Frequency and gain of the point currently under the finger.
+    ///
+    /// Pinned to a corner rather than floating beside the point: a label that follows the
+    /// finger is the label most likely to be underneath it, and near the edges of the plot it
+    /// would have to dodge the boundary as well.
+    ///
+    /// The value shown is the point's own, as it will be written to the curve file — not where
+    /// the curve happens to be sitting on a measurement after fitting.
+    @ViewBuilder
+    private var readout: some View {
+        if let dragging, let point = curve?.points.first(where: { $0.id == dragging }) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(point.frequency >= 1_000
+                     ? String(format: "%.2f kHz", point.frequency / 1_000)
+                     : String(format: "%.0f Hz", point.frequency))
+                    .font(.caption.weight(.semibold).monospacedDigit())
+                Text(String(format: "%+.1f dB", point.gainDB))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+            .padding(10)
+            .transition(.opacity)
+            .allowsHitTesting(false)
+        }
+    }
+
     private func overlay(proxy: ChartProxy, geometry: GeometryProxy) -> some View {
         Color.clear
             .contentShape(Rectangle())
