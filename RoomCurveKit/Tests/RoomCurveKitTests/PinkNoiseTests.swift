@@ -189,3 +189,60 @@ struct CalibrationTests {
         #expect(MicrophoneCalibration.none.sampled().allSatisfy { abs($0) < 1e-9 })
     }
 }
+
+@Suite("Measured calibrations")
+struct MeasuredCalibrationTests {
+    let grid = LogGrid.standard
+
+    @Test("iPhone 17 Pro curve is measured, attributed, and shaped as published")
+    func iPhone17Pro() {
+        let calibration = MicrophoneCalibration.iPhone17Pro
+        #expect(!calibration.isEstimate)
+        #expect(calibration.source?.contains("Faber") == true)
+        #expect(calibration.notes?.isEmpty == false)
+
+        let sampled = calibration.sampled(on: grid)
+        func value(at frequency: Double) -> Double {
+            sampled[Int(grid.index(of: frequency).rounded())]
+        }
+
+        // Flat through the midrange, which is where room correction operates.
+        for frequency in [315.0, 500, 1_000, 2_000] {
+            #expect(abs(value(at: frequency)) < 1.0)
+        }
+        // A deeper low-frequency rolloff than the usual "below 60 Hz" folklore implies.
+        #expect(abs(value(at: 50) - (-3.5)) < 0.5)
+        #expect(abs(value(at: 31.5) - (-7.0)) < 0.5)
+        #expect(value(at: 20) < -14)
+        // The high-frequency port resonance is present.
+        #expect(value(at: 11_200) > 8)
+    }
+
+    @Test("applying the iPhone 17 Pro curve lifts the bass back up")
+    func correctsBass() {
+        let calibration = MicrophoneCalibration.iPhone17Pro.sampled(on: grid)
+        let flat = FrequencyResponse(
+            grid: grid,
+            magnitudeDB: [Double](repeating: 0, count: grid.count),
+            phaseDegrees: [Double](repeating: 0, count: grid.count),
+            groupDelayMS: [Double](repeating: 0, count: grid.count),
+            snrDB: [Double](repeating: 60, count: grid.count))
+        let corrected = flat.applying(calibrationDB: calibration)
+        // A microphone reading 7 dB low at 31.5 Hz means the real level was 7 dB higher.
+        #expect(abs(corrected.magnitudeDB[Int(grid.index(of: 31.5).rounded())] - 7.0) < 0.5)
+    }
+
+    @Test("bundled list marks estimates apart from measurements")
+    func bundledList() {
+        let bundled = MicrophoneCalibration.bundled
+        #expect(bundled.contains { $0.isEstimate })
+        #expect(bundled.contains { !$0.isEstimate && $0.source != nil })
+    }
+
+    @Test("source and notes survive serialisation")
+    func serialisationCarriesProvenance() {
+        let text = MicrophoneCalibration.iPhone17Pro.serialised()
+        #expect(text.contains("Faber"))
+        #expect(text.contains("USB-C"))
+    }
+}
