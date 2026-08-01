@@ -36,8 +36,8 @@ struct EqualizeView: View {
                              lowFrequency: $low, highFrequency: $high)
                 .padding(.horizontal, 8)
                 .padding(.trailing, 68)
-                .overlay(alignment: .top) {
-                    summary.padding(.horizontal, 40)
+                .overlay(alignment: .bottomLeading) {
+                    compactSummary.padding(.leading, 44).padding(.bottom, 34)
                 }
                 .overlay(alignment: .trailing) { toolbar.padding(.trailing, 16) }
             } else {
@@ -99,6 +99,23 @@ struct EqualizeView: View {
         .padding(.top, 4)
     }
 
+    /// The same three numbers as the portrait summary, on one line and tucked into a corner
+    /// where they do not sit on top of the traces.
+    private var compactSummary: some View {
+        HStack(spacing: 10) {
+            Text("\(correction?.filters.count ?? 0) filters")
+            Text(String(format: "max %+.1f dB", correction?.maxBoostDB ?? 0))
+                .foregroundStyle((correction?.maxBoostDB ?? 0) > state.eqSettings.maxGainDB + 0.01
+                                 ? .red : .secondary)
+            Text(String(format: "preamp %.1f dB", correction?.preampDB ?? 0))
+        }
+        .font(.caption.monospacedDigit())
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(.regularMaterial, in: Capsule())
+    }
+
     private func stat(_ label: String, _ value: String, warn: Bool = false) -> some View {
         VStack(spacing: 1) {
             Text(value)
@@ -129,19 +146,24 @@ struct EqualizeView: View {
                 .disabled(correction?.filters.isEmpty ?? true)
 
                 Button { showExport = true } label: {
-                    Label("Export", systemImage: "square.and.arrow.up")
-                        .font(.subheadline.weight(.semibold))
-                        .frame(height: 30)
-                        .padding(.horizontal, 6)
+                    if isShort {
+                        Image(systemName: "square.and.arrow.up")
+                            .font(.body).frame(width: 30, height: 30)
+                    } else {
+                        Label("Export", systemImage: "square.and.arrow.up")
+                            .font(.subheadline.weight(.semibold))
+                            .frame(height: 30)
+                            .padding(.horizontal, 6)
+                    }
                 }
                 .prominentAction()
                 .disabled(correction?.filters.isEmpty ?? true)
             }
             .floatingBar(vertical: isShort)
         }
-        .padding(.top, 6)
-        .padding(.bottom, 10)
-        .frame(maxWidth: .infinity)
+        .padding(.top, isShort ? 0 : 6)
+        .padding(.bottom, isShort ? 0 : 10)
+        .frame(maxWidth: isShort ? nil : .infinity)
     }
 
     private var series: [PlotSeries] {

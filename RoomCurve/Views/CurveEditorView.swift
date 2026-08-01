@@ -46,7 +46,11 @@ struct CurveEditorView: View {
                 }
             }
         }
-        .navigationTitle("Curve Editor")
+        // Landscape has no room for the footer, and which curve you are editing is not
+        // something to lose; it moves into the title instead.
+        .navigationTitle(isShort ? (curve.map { "\($0.name)\(hasChanges ? " · edited" : "")" }
+                                    ?? "Curve Editor")
+                                 : "Curve Editor")
         .navigationBarTitleDisplayMode(.inline)
         // Hiding the system button also disables the edge swipe, which would otherwise be a
         // way to leave that skips the warning entirely.
@@ -133,7 +137,7 @@ struct CurveEditorView: View {
                         }
                     }
                 }
-                .chartXScale(domain: range.low...range.high, type: .log)
+                .chartXScale(domain: (range.low * 0.9)...(range.high * 1.1), type: .log)
                 .chartYScale(domain: gainRange)
                 .chartYAxis {
                     AxisMarks(position: .leading) {
@@ -149,6 +153,7 @@ struct CurveEditorView: View {
                             if let frequency = value.as(Double.self) {
                                 Text(frequency >= 1_000 ? "\(Int(frequency / 1_000))k"
                                                         : "\(Int(frequency))")
+                                .fixedSize()
                             }
                         }
                     }
@@ -359,10 +364,15 @@ struct CurveEditorView: View {
                     .disabled(curve == nil)
 
                     Button { save() } label: {
-                        Label("Save", systemImage: "square.and.arrow.down")
-                            .font(.subheadline.weight(.semibold))
-                            .frame(height: 30)
-                            .padding(.horizontal, 6)
+                        if isShort {
+                            Image(systemName: "square.and.arrow.down")
+                                .font(.body).frame(width: 30, height: 30)
+                        } else {
+                            Label("Save", systemImage: "square.and.arrow.down")
+                                .font(.subheadline.weight(.semibold))
+                                .frame(height: 30)
+                                .padding(.horizontal, 6)
+                        }
                     }
                     .prominentAction()
                     .disabled(curve == nil)
