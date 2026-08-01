@@ -1,0 +1,304 @@
+import SwiftUI
+import RoomCurveKit
+
+struct SweepView: View {
+    @EnvironmentObject private var store: Store
+    @EnvironmentObject private var state: AppState
+    @EnvironmentObject private var audio: AudioEngine
+
+    @State private var plotKind: PlotKind = .magnitude
+    @State private var low = 20.0
+    @State private var high = 20_000.0
+    @State private var measuring = false
+    @State private var showMeasureSetup = false
+    @State private var showPlotSetup = false
+    @State private var saveName = ""
+    @State private var showSave = false
+    @State private var task: Task<Void, Never>?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            statusStrip
+            plot
+            toolbar
+        }
+        .navigationTitle("Sweep")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                RoutePickerButton().frame(width: 40, height: 40)
+            }
+        }
+        .sheet(isPresented: $showMeasureSetup) { MeasureSetupView() }
+        .sheet(isPresented: $showPlotSetup) { PlotSetupView() }
+        .alert("Save measurement", isPresented: $showSave) {
+            TextField("Name", text: $saveName)
+            Button("Cancel", role: .cancel) {}
+            Button("Save") { save() }
+        } message: {
+            Text(state.plotMode == .average
+                 ? "Saves the average of \(state.captures.count) measurements."
+                 : "Saves the most recent measurement.")
+        }
+        .onDisappear { task?.cancel(); audio.stop() }
+    }
+
+    // MARK: - Pieces
+
+    private var statusStrip: some View {
+        VStack(spacing: 2) {
+            if let status = state.status {
+                Text(status)
+                    .font(.footnote)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+            if let drift = state.lastClockDriftPPM, abs(drift) > 200 {
+                Label(String(format: "Clock drift %.0f ppm — phase above a few kHz may be "
+                             + "smeared. A shorter sweep or a wired connection helps.", drift),
+                      systemImage: "clock.badge.exclamationmark")
+                .font(.caption)
+                .foregroundStyle(.orange)
+            }
+            if audio.inputWasReclaimed {
+                Label("Input was switched away and has been set back to the built-in "
+                      + "microphone.", systemImage: "mic.badge.plus")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal)
+        .padding(.vertical, state.status == nil ? 0 : 6)
+        .animation(.spring(duration: 0.3, bounce: 0), value: state.status)
+    }
+
+    private var plot: some View {
+        ResponsePlot(series: series, kind: plotKind, grid: state.grid,
+                     lowFrequency: $low, highFrequency: $high)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .overlay(alignment: .top) {
+            if state.captures.isEmpty {
+                ContentUnavailableView(
+                    "No measurements",
+                    systemImage: "waveform.path",
+                    description: Text("Set the volume low, tap Measure, then raise the volume "
+                                      + "until the sweep is clearly audible."))
+                .allowsHitTesting(false)
+            }
+        }
+        .gesture(pagingGesture)
+    }
+
+    /// Swiping from the edge moves between magnitude, phase and group delay.
+    private var pagingGesture: some Gesture {
+        DragGesture(minimumDistance: 30)
+            .onEnded { value in
+                guard abs(value.translation.width) > abs(value.translation.height) * 2 else {
+                    return
+                }
+                let all = PlotKind.allCases
+                guard let index = all.firstIndex(of: plotKind) else { return }
+                let next = value.translation.width < 0 ? index + 1 : index - 1
+                guard all.indices.contains(next) else { return }
+                withAnimation(.spring(duration: 0.35, bounce: 0.15)) { plotKind = all[next] }
+            }
+    }
+
+    private var toolbar: some View {
+        VStack(spacing: 10) {
+            Picker("Plot", selection: $plotKind) {
+                ForEach(PlotKind.allCases) { Text($0.label).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal)
+
+            HStack(spacing: 22) {
+                button("gearshape", "Measure setup") { showMeasureSetup = true }
+                button("chart.xyaxis.line", "Plot setup") { showPlotSetup = true }
+
+                Button {
+                    measuring ? cancel() : measure()
+                } label: {
+                    ZStack {
+                        Circle()
+                            .fill(measuring ? Color.red : Color.accentColor)
+                            .frame(width: 62, height: 62)
+                        if measuring {
+                            ProgressView().tint(.white)
+                        } else {
+                            Image(systemName: "waveform.badge.magnifyingglass")
+                                .font(.title2)
+                                .foregroundStyle(.white)
+                        }
+                    }
+                }
+                .buttonStyle(PressableButtonStyle())
+                .accessibilityLabel(measuring ? "Stop measuring" : "Measure")
+
+                button("arrow.uturn.backward", "Undo") { state.undoCapture() }
+                    .disabled(state.captures.isEmpty)
+                button("square.and.arrow.down", "Save") {
+                    saveName = defaultName()
+                    showSave = true
+                }
+                .disabled(state.captures.isEmpty)
+            }
+
+            HStack {
+                Text(state.captures.isEmpty
+                     ? "Ready" : "\(state.captures.count) measurement"
+                     + (state.captures.count == 1 ? "" : "s"))
+                Spacer()
+                Button("Reset") { state.resetCaptures() }
+                    .disabled(state.captures.isEmpty)
+            }
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal)
+        }
+        .padding(.vertical, 10)
+        .background(.bar)
+    }
+
+    private func button(_ icon: String, _ label: String,
+                        action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon).font(.title3)
+        }
+        .buttonStyle(PressableButtonStyle())
+        .accessibilityLabel(label)
+    }
+
+    // MARK: - Series
+
+    private var series: [PlotSeries] {
+        var result: [PlotSeries] = []
+        let grid = state.grid
+
+        if plotKind == .magnitude {
+            result.append(PlotSeries(id: "target", values: state.fittedTarget(from: store),
+                                     color: .yellow, lineWidth: 2, band: 3))
+        } else {
+            result.append(PlotSeries(id: "zero",
+                                     values: [Double](repeating: 0, count: grid.count),
+                                     color: .yellow, lineWidth: 1))
+        }
+
+        if let comparison = state.comparisonMeasurement,
+           let ir = try? comparison.load() {
+            let response = Analyser.response(of: ir).smoothed(state.smoothing)
+            result.append(PlotSeries(id: "saved", values: values(of: response),
+                                     color: .gray, lineWidth: 1.5,
+                                     blanked: state.blanked(for: response)))
+        }
+
+        // Older captures fade back so the newest reads as the current one.
+        if state.plotMode == .history {
+            for (index, capture) in state.captures.enumerated().dropLast() {
+                let age = Double(state.captures.count - index)
+                let smoothed = capture.smoothed(state.smoothing)
+                result.append(PlotSeries(id: "history-\(index)", values: values(of: smoothed),
+                                         color: .green, lineWidth: 1,
+                                         blanked: state.blanked(for: smoothed),
+                                         opacity: max(0.12, 0.6 / age)))
+            }
+        } else if state.captures.count > 1 {
+            for (index, capture) in state.captures.enumerated() {
+                let smoothed = capture.smoothed(state.smoothing)
+                result.append(PlotSeries(id: "member-\(index)", values: values(of: smoothed),
+                                         color: .green, lineWidth: 0.8,
+                                         blanked: state.blanked(for: smoothed),
+                                         opacity: 0.22))
+            }
+        }
+
+        if let current = state.currentResponse {
+            result.append(PlotSeries(id: "current", values: values(of: current),
+                                     color: .green, lineWidth: 2.5,
+                                     blanked: state.blanked(for: current)))
+        }
+        return result
+    }
+
+    private func values(of response: FrequencyResponse) -> [Double] {
+        switch plotKind {
+        case .magnitude: response.magnitudeDB
+        case .phase: response.phaseDegrees
+        case .groupDelay: response.groupDelayMS
+        }
+    }
+
+    // MARK: - Actions
+
+    private func measure() {
+        measuring = true
+        state.show(state.externalStimulus
+                   ? "Listening — start the test signal on your system"
+                   : "Measuring…")
+
+        task = Task {
+            defer { measuring = false }
+            do {
+                var config = state.sweepConfig
+                config.sampleRate = audio.sampleRate
+                let stimulus = SweepGenerator.make(config)
+
+                let recording = try await audio.measure(
+                    stimulus: stimulus,
+                    chirpChannel: state.chirpChannel,
+                    sweepChannel: state.sweepChannel,
+                    externalStimulus: state.externalStimulus)
+
+                guard !Task.isCancelled else { return }
+
+                let ir = try Deconvolver.analyse(recording: recording, stimulus: stimulus,
+                                                 removeDelay: state.removeDelay)
+                let response = Analyser.response(of: ir)
+                state.lastImpulseResponse = ir
+                state.lastClockDriftPPM = ir.clockDriftPPM
+                state.addCapture(state.calibrated(response, store: store))
+                state.show("Measurement captured")
+            } catch is CancellationError {
+                // Nothing to report; the user stopped it.
+            } catch {
+                state.errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func cancel() {
+        task?.cancel()
+        audio.stop()
+        measuring = false
+        state.show("Stopped")
+    }
+
+    private func defaultName() -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HHmm"
+        return "Measurement \(formatter.string(from: Date()))"
+    }
+
+    private func save() {
+        guard let ir = state.lastImpulseResponse else { return }
+        do {
+            try store.save(ir, name: saveName)
+            state.show("Saved as \(saveName)")
+        } catch {
+            state.errorMessage = error.localizedDescription
+        }
+    }
+}
+
+/// Presses respond immediately, on touch-down rather than on release.
+struct PressableButtonStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.92 : 1)
+            .opacity(configuration.isPressed ? 0.7 : 1)
+            .animation(.spring(duration: 0.25, bounce: 0), value: configuration.isPressed)
+    }
+}

@@ -313,7 +313,7 @@ public extension FilterSet {
 // MARK: - Manual entry
 
 /// A destination that has no import path, so the user has to type the values in.
-public struct ManualEQTarget: Sendable, Equatable, Identifiable {
+public struct ManualEQTarget: Sendable, Hashable, Identifiable {
     public var id: String { name }
     public let name: String
     /// Fixed band centres, for graphic equalisers. Empty means the target is parametric and

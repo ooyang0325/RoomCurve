@@ -1,3 +1,4 @@
+import Combine
 import AVFoundation
 import Foundation
 import RoomCurveKit
@@ -294,7 +295,8 @@ final class AudioEngine: ObservableObject {
         isRunning = true
 
         if let signal {
-            player.scheduleBuffer(signal, at: nil, options: [])
+            // The completion-handler form, to select the non-async overload.
+            player.scheduleBuffer(signal, at: nil, options: [], completionHandler: nil)
             player.play()
         }
 
