@@ -12,10 +12,17 @@ struct CurveEditorView: View {
     @State private var dragging: UUID?
     @State private var gestureStart: CGPoint?
     @State private var moved = false
+    @State private var pendingTap: PendingTap?
     @State private var showSource = false
     @State private var showNew = false
     @State private var newName = ""
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// A tap waiting to see whether a second one follows it.
+    private struct PendingTap {
+        let id = UUID()
+        let location: CGPoint
+    }
 
     private let range = (low: 20.0, high: 20_000.0)
     private let gainRange = -20.0...20.0
@@ -113,13 +120,7 @@ struct CurveEditorView: View {
     /// A drag with no minimum distance claims every touch that lands on the plot — a tap is
     /// simply a drag that never moved — so any `onTapGesture` attached alongside it never
     /// fires. Rather than fight that, the decision is made on release: if the finger moved, it
-    /// was a drag; if it did not, it was a tap, and what it landed on decides between adding
-    /// and removing.
-    ///
-    /// Removing is a tap on an existing point rather than HouseCurve's double tap. Detecting a
-    /// double tap means holding every single tap for the length of the double-tap window before
-    /// acting on it, and adding a point is common while removing one is rare. Not worth
-    /// delaying the common case for.
+    /// was a drag; if it did not, it was a tap, and the tap counting happens here too.
     private func overlay(proxy: ChartProxy, geometry: GeometryProxy) -> some View {
         Color.clear
             .contentShape(Rectangle())
@@ -161,7 +162,7 @@ struct CurveEditorView: View {
                             }
                         }
                         guard !moved, let plotFrame = proxy.plotFrame else { return }
-                        tap(at: local(value.location, plotFrame, geometry), proxy: proxy)
+                        tapped(at: local(value.location, plotFrame, geometry), proxy: proxy)
                     }
             )
     }
@@ -172,24 +173,52 @@ struct CurveEditorView: View {
         return CGPoint(x: location.x - origin.x, y: location.y - origin.y)
     }
 
-    /// A tap on a point removes it; a tap anywhere else adds one.
-    private func tap(at point: CGPoint, proxy: ChartProxy) {
-        guard var curve else { return }
+    /// Single tap adds a point, double tap on a point removes it.
+    ///
+    /// Telling those apart costs a delay: the first tap cannot be acted on until the window for
+    /// a second one has passed, or every double tap would add a stray point before removing
+    /// anything. The delay lands only on adding — dragging is untouched, and the removal fires
+    /// immediately on the second tap.
+    ///
+    /// A single tap that lands on an existing point does nothing. It would otherwise drop a
+    /// duplicate exactly on top of the point you were aiming at.
+    private func tapped(at point: CGPoint, proxy: ChartProxy) {
+        let hit = curve.flatMap { nearestPoint(to: point, proxy: proxy, curve: $0) }
 
-        if let id = nearestPoint(to: point, proxy: proxy, curve: curve) {
-            guard curve.points.count > 2 else { return }
-            curve.points.removeAll { $0.id == id }
-        } else {
-            guard curve.points.count < 20,
-                  let frequency: Double = proxy.value(atX: point.x),
-                  let gain: Double = proxy.value(atY: point.y) else { return }
-            curve.points.append(
-                CurvePoint(frequency: frequency.clamped(to: range.low...range.high),
-                           gainDB: gain.clamped(to: gainRange)))
-            curve.points.sort { $0.frequency < $1.frequency }
+        if let pending = pendingTap,
+           hypot(point.x - pending.location.x, point.y - pending.location.y) < 44 {
+            pendingTap = nil
+            if let hit { remove(hit) } else { add(at: point, proxy: proxy) }
+            return
         }
 
+        let pending = PendingTap(location: point)
+        pendingTap = pending
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard pendingTap?.id == pending.id else { return }
+            pendingTap = nil
+            if hit == nil { add(at: point, proxy: proxy) }
+        }
+    }
+
+    private func add(at point: CGPoint, proxy: ChartProxy) {
+        guard var curve, curve.points.count < 20,
+              let frequency: Double = proxy.value(atX: point.x),
+              let gain: Double = proxy.value(atY: point.y) else { return }
+        curve.points.append(CurvePoint(frequency: frequency.clamped(to: range.low...range.high),
+                                       gainDB: gain.clamped(to: gainRange)))
+        curve.points.sort { $0.frequency < $1.frequency }
         withAnimation(reduceMotion ? nil : .spring(duration: 0.3, bounce: 0.2)) {
+            self.curve = curve
+        }
+    }
+
+    private func remove(_ id: UUID) {
+        // A curve needs at least two points to describe anything.
+        guard var curve, curve.points.count > 2 else { return }
+        curve.points.removeAll { $0.id == id }
+        withAnimation(reduceMotion ? nil : .spring(duration: 0.3, bounce: 0)) {
             self.curve = curve
         }
     }
@@ -249,7 +278,7 @@ struct CurveEditorView: View {
                 .disabled(curve == nil)
             }
 
-            Text("Drag a point to move it. Tap a point to remove it, tap anywhere else to add one.")
+            Text("Drag points to shape the curve. Tap to add, double tap to remove.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
