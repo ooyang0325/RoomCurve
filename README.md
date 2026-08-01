@@ -58,9 +58,12 @@ Requires Xcode 26 or later, iOS 17+.
 > separate and can stay — the icon renders identically without the top-level declaration.
 
 ```sh
-swift test --package-path RoomCurveKit     # 80 tests, about a second, no simulator needed
-open RoomCurve/RoomCurve.xcodeproj
+swift test --package-path RoomCurveKit     # 89 tests, about a second, no simulator needed
+open RoomCurve.xcodeproj
 ```
+
+CI runs both of those on every pull request: the package tests, and an app build against the
+simulator SDK.
 
 The DSP lives in `RoomCurveKit`, a plain Swift package with no UI, so the maths can be tested on
 any machine. The end-to-end test measures a synthetic room through the full pipeline — sweep
