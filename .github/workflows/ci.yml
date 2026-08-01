@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A new push supersedes whatever was already running for the same branch.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dsp:
+    name: DSP tests
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select newest Xcode
+        run: |
+          latest=$(ls -d /Applications/Xcode*.app | sort -V | tail -1)
+          echo "Using $latest"
+          sudo xcode-select -s "$latest"
+          swift --version
+
+      # The measurement maths lives in a package with no UI and no platform audio, so it runs
+      # natively on the runner in about a second, with no simulator to boot. This is the job
+      # that actually catches regressions: sweep generation, deconvolution, windowing, the
+      # filter design, the exporters, and an end-to-end pass over a synthetic room.
+      - name: Run tests
+        run: swift test --package-path RoomCurveKit
+
+  app:
+    name: App build
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select newest Xcode
+        run: |
+          latest=$(ls -d /Applications/Xcode*.app | sort -V | tail -1)
+          echo "Using $latest"
+          sudo xcode-select -s "$latest"
+          xcodebuild -version
+
+      # The app adopts Liquid Glass and ships an Icon Composer document, both of which need the
+      # iOS 26 SDK to compile. Checking here turns "runner image is too old" into one clear
+      # line instead of an unrelated-looking error deep in the build log.
+      - name: Require the iOS 26 SDK
+        run: |
+          if ! xcodebuild -showsdks | grep -qE "iphonesimulator2[6-9]"; then
+            echo "::error::RoomCurve needs Xcode 26 or later. This runner has:"
+            xcodebuild -version
+            exit 1
+          fi
+
+      # A generic destination builds against the simulator SDK without booting a simulator.
+      # Signing is off because compiling needs no credentials, and CI has none.
+      - name: Build
+        run: |
+          xcodebuild build \
+            -project RoomCurve.xcodeproj \
+            -scheme RoomCurve \
+            -destination 'generic/platform=iOS Simulator' \
+            -configuration Debug \
+            CODE_SIGNING_ALLOWED=NO

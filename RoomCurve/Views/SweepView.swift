@@ -7,24 +7,45 @@ struct SweepView: View {
     @EnvironmentObject private var audio: AudioEngine
 
     @State private var plotKind: PlotKind = .magnitude
-    @State private var low = 20.0
-    @State private var high = 20_000.0
+    @State private var low = ResponsePlot.defaultLow
+    @State private var high = ResponsePlot.defaultHigh
     @State private var measuring = false
     @State private var showMeasureSetup = false
     @State private var showPlotSetup = false
     @State private var saveName = ""
     @State private var showSave = false
     @State private var task: Task<Void, Never>?
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+
+    /// Landscape on a phone. The plot wants every pixel of height it can get, so the chrome
+    /// has to stop taking a horizontal slice out of it and float on top instead.
+    private var isShort: Bool { verticalSizeClass == .compact }
 
     var body: some View {
-        VStack(spacing: 0) {
-            statusStrip
-            plot
-            toolbar
+        Group {
+            if isShort {
+                // The bar floats over the plot, so the plot gives back just enough room at the
+                // bottom for the frequency labels to stay readable underneath it.
+                plot
+                    .padding(.trailing, 68)
+                    .overlay(alignment: .trailing) { controls.padding(.trailing, 16) }
+            } else {
+                VStack(spacing: 0) {
+                    statusStrip
+                    plot
+                    toolbar
+                }
+            }
         }
         .navigationTitle("Sweep")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            // In landscape the plot selector moves up into the bar rather than costing a row.
+            if isShort {
+                ToolbarItem(placement: .principal) {
+                    plotPicker.frame(width: 300)
+                }
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 RoutePickerButton().frame(width: 40, height: 40)
             }
@@ -105,16 +126,35 @@ struct SweepView: View {
             }
     }
 
+    private var plotPicker: some View {
+        Picker("Plot", selection: $plotKind) {
+            ForEach(PlotKind.allCases) { Text($0.label).tag($0) }
+        }
+        .pickerStyle(.segmented)
+    }
+
     private var toolbar: some View {
         VStack(spacing: 10) {
-            Picker("Plot", selection: $plotKind) {
-                ForEach(PlotKind.allCases) { Text($0.label).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .padding(.horizontal)
+            plotPicker.padding(.horizontal)
+            controls
+            counts
+        }
+        .padding(.top, 4)
+        .padding(.bottom, 10)
+    }
 
-            GlassGroup {
-                HStack(spacing: 18) {
+    /// A row along the bottom in portrait, a rail down the right in landscape.
+    ///
+    /// The rail keeps the whole plot height and, unlike a bar across the bottom, never sits on
+    /// top of the frequency labels.
+    private var controlLayout: AnyLayout {
+        isShort ? AnyLayout(VStackLayout(spacing: 10))
+                : AnyLayout(HStackLayout(spacing: 18))
+    }
+
+    private var controls: some View {
+        GlassGroup {
+                controlLayout {
                     button("gearshape", "Measure setup") { showMeasureSetup = true }
                     button("chart.xyaxis.line", "Plot setup") { showPlotSetup = true }
 
@@ -143,23 +183,22 @@ struct SweepView: View {
                     }
                     .disabled(state.captures.isEmpty)
                 }
-                .floatingBar()
-            }
-
-            HStack {
-                Text(state.captures.isEmpty
-                     ? "Ready" : "\(state.captures.count) measurement"
-                     + (state.captures.count == 1 ? "" : "s"))
-                Spacer()
-                Button("Reset") { state.resetCaptures() }
-                    .disabled(state.captures.isEmpty)
-            }
-            .font(.footnote)
-            .foregroundStyle(.secondary)
-            .padding(.horizontal)
+                .floatingBar(vertical: isShort)
         }
-        .padding(.top, 4)
-        .padding(.bottom, 10)
+    }
+
+    private var counts: some View {
+        HStack {
+            Text(state.captures.isEmpty
+                 ? "Ready" : "\(state.captures.count) measurement"
+                 + (state.captures.count == 1 ? "" : "s"))
+            Spacer()
+            Button("Reset") { state.resetCaptures() }
+                .disabled(state.captures.isEmpty)
+        }
+        .font(.footnote)
+        .foregroundStyle(.secondary)
+        .padding(.horizontal)
     }
 
     private func button(_ icon: String, _ label: String,
@@ -237,7 +276,7 @@ struct SweepView: View {
     private func measure() {
         measuring = true
         state.show(state.externalStimulus
-                   ? "Listening — start the test signal on your system"
+                   ? "Listening — play the test signal whenever you are ready"
                    : "Measuring…")
 
         task = Task {
@@ -247,11 +286,15 @@ struct SweepView: View {
                 config.sampleRate = audio.sampleRate
                 let stimulus = SweepGenerator.make(config)
 
-                let recording = try await audio.measure(
-                    stimulus: stimulus,
-                    chirpChannel: state.chirpChannel,
-                    sweepChannel: state.sweepChannel,
-                    externalStimulus: state.externalStimulus)
+                let recording: [Float]
+                if state.externalStimulus {
+                    recording = try await listenForExternalSignal(stimulus: stimulus)
+                } else {
+                    recording = try await audio.measure(
+                        stimulus: stimulus,
+                        chirpChannel: state.chirpChannel,
+                        sweepChannel: state.sweepChannel)
+                }
 
                 guard !Task.isCancelled else { return }
 
@@ -268,6 +311,38 @@ struct SweepView: View {
                 state.errorMessage = error.localizedDescription
             }
         }
+    }
+
+    /// Wait for somebody to press play, then capture the rest of the signal.
+    ///
+    /// Rather than record for a fixed window and hope it overlaps with whatever the other
+    /// device is doing, this listens indefinitely and watches for the moment the room stops
+    /// being quiet. Once the signal starts it keeps recording exactly long enough to hold a
+    /// complete measurement, then stops on its own.
+    private func listenForExternalSignal(stimulus: SweepStimulus) async throws -> [Float] {
+        try audio.startListening()
+        defer { audio.stop() }
+
+        let sampleRate = audio.sampleRate
+        let needed = stimulus.samplesNeededAfterOnset
+        var onset: Int?
+
+        while !Task.isCancelled {
+            try await Task.sleep(for: .milliseconds(200))
+            let captured = audio.capturedSamples()
+
+            if onset == nil {
+                onset = SignalOnset.find(in: captured, sampleRate: sampleRate)
+                if onset != nil { state.show("Test signal detected — capturing") }
+                continue
+            }
+            guard let onset else { continue }
+
+            if captured.count >= onset + needed {
+                return captured
+            }
+        }
+        throw CancellationError()
     }
 
     private func cancel() {

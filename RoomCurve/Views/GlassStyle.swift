@@ -9,8 +9,12 @@ import SwiftUI
 extension View {
 
     /// A floating control bar that sits over the content rather than walling it off.
-    func floatingBar() -> some View {
-        modifier(FloatingBar())
+    ///
+    /// - Parameter vertical: a rail down the side rather than a bar along the bottom. It gets
+    ///   tighter side padding so its buttons line up with the navigation bar's, which sit at
+    ///   the standard trailing margin.
+    func floatingBar(vertical: Bool = false) -> some View {
+        modifier(FloatingBar(vertical: vertical))
     }
 
     /// The main action on a screen: measure, save, export.
@@ -25,8 +29,16 @@ extension View {
 }
 
 private struct FloatingBar: ViewModifier {
+    var vertical = false
+
     func body(content: Content) -> some View {
-        if #available(iOS 26.0, *) {
+        if vertical {
+            // No enclosing capsule for the side rail. Its padding would push the buttons
+            // inward, leaving them out of line with the navigation bar's buttons directly
+            // above. Each button already carries its own glass, and a glass container merges
+            // neighbours that sit close together, so the group still reads as one control.
+            content
+        } else if #available(iOS 26.0, *) {
             content
                 .padding(.horizontal, 18)
                 .padding(.vertical, 12)

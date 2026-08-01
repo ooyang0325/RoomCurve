@@ -50,6 +50,15 @@ struct MeasureSetupView: View {
                          + "a wireless connection keeps failing.")
                     .font(.caption).foregroundStyle(.secondary)
                     if state.externalStimulus {
+                        Text("Export the file below, then tap Measure and play it whenever you "
+                             + "are ready. RoomCurve waits for the signal to start rather than "
+                             + "listening for a fixed time, so there is nothing to race.")
+                        .font(.caption).foregroundStyle(.secondary)
+                        Text("Re-export whenever you change the sweep length or channels — the "
+                             + "file and the app have to describe the same signal.")
+                        .font(.caption).foregroundStyle(.orange)
+                    }
+                    if state.externalStimulus {
                         Button("Export test signal…") { exportStimulus() }
                     }
                 }

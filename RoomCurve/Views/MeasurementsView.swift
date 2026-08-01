@@ -128,8 +128,8 @@ struct DeriveCalibrationView: View {
     @State private var underTest: SavedMeasurement?
     @State private var name = ""
     @State private var preview: MicrophoneCalibration?
-    @State private var low = 20.0
-    @State private var high = 20_000.0
+    @State private var low = ResponsePlot.defaultLow
+    @State private var high = ResponsePlot.defaultHigh
 
     var body: some View {
         NavigationStack {

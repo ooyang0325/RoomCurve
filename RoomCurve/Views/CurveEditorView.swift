@@ -20,6 +20,9 @@ struct CurveEditorView: View {
     @State private var confirmDiscard = false
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+
+    private var isShort: Bool { verticalSizeClass == .compact }
 
     /// A tap waiting to see whether a second one follows it.
     private struct PendingTap {
@@ -31,11 +34,23 @@ struct CurveEditorView: View {
     private let gainRange = -20.0...20.0
 
     var body: some View {
-        VStack(spacing: 0) {
-            editor
-            footer
+        Group {
+            if isShort {
+                editor
+                    .padding(.trailing, 68)
+                    .overlay(alignment: .trailing) { controls.padding(.trailing, 16) }
+            } else {
+                VStack(spacing: 0) {
+                    editor
+                    footer
+                }
+            }
         }
-        .navigationTitle("Curve Editor")
+        // Landscape has no room for the footer, and which curve you are editing is not
+        // something to lose; it moves into the title instead.
+        .navigationTitle(isShort ? (curve.map { "\($0.name)\(hasChanges ? " · edited" : "")" }
+                                    ?? "Curve Editor")
+                                 : "Curve Editor")
         .navigationBarTitleDisplayMode(.inline)
         // Hiding the system button also disables the edge swipe, which would otherwise be a
         // way to leave that skips the warning entirely.
@@ -122,7 +137,7 @@ struct CurveEditorView: View {
                         }
                     }
                 }
-                .chartXScale(domain: range.low...range.high, type: .log)
+                .chartXScale(domain: (range.low * 0.9)...(range.high * 1.1), type: .log)
                 .chartYScale(domain: gainRange)
                 .chartYAxis {
                     AxisMarks(position: .leading) {
@@ -138,6 +153,7 @@ struct CurveEditorView: View {
                             if let frequency = value.as(Double.self) {
                                 Text(frequency >= 1_000 ? "\(Int(frequency / 1_000))k"
                                                         : "\(Int(frequency))")
+                                .fixedSize()
                             }
                         }
                     }
@@ -319,8 +335,20 @@ struct CurveEditorView: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
 
-            GlassGroup {
-                HStack(spacing: 18) {
+            controls
+        }
+        .padding(.top, 4)
+        .padding(.bottom, 10)
+    }
+
+    private var controlLayout: AnyLayout {
+        isShort ? AnyLayout(VStackLayout(spacing: 10))
+                : AnyLayout(HStackLayout(spacing: 18))
+    }
+
+    private var controls: some View {
+        GlassGroup {
+                controlLayout {
                     Button { if let original { curve = original } } label: {
                         Image(systemName: "arrow.uturn.backward")
                             .font(.body).frame(width: 30, height: 30)
@@ -336,23 +364,21 @@ struct CurveEditorView: View {
                     .disabled(curve == nil)
 
                     Button { save() } label: {
-                        Label("Save", systemImage: "square.and.arrow.down")
-                            .font(.subheadline.weight(.semibold))
-                            .frame(height: 30)
-                            .padding(.horizontal, 6)
+                        if isShort {
+                            Image(systemName: "square.and.arrow.down")
+                                .font(.body).frame(width: 30, height: 30)
+                        } else {
+                            Label("Save", systemImage: "square.and.arrow.down")
+                                .font(.subheadline.weight(.semibold))
+                                .frame(height: 30)
+                                .padding(.horizontal, 6)
+                        }
                     }
                     .prominentAction()
                     .disabled(curve == nil)
                 }
-                .floatingBar()
-            }
-
-            Text("Drag points to shape the curve. Tap to add, double tap to remove.")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+                .floatingBar(vertical: isShort)
         }
-        .padding(.top, 4)
-        .padding(.bottom, 10)
     }
 
     private var hasChanges: Bool {

@@ -5,14 +5,17 @@ struct EqualizeView: View {
     @EnvironmentObject private var store: Store
     @EnvironmentObject private var state: AppState
 
-    @State private var low = 20.0
-    @State private var high = 20_000.0
+    @State private var low = ResponsePlot.defaultLow
+    @State private var high = ResponsePlot.defaultHigh
     @State private var source: SavedMeasurement?
     @State private var measured: FrequencyResponse?
     @State private var correction: Correction?
     @State private var showSettings = false
     @State private var showFilters = false
     @State private var showExport = false
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+
+    private var isShort: Bool { verticalSizeClass == .compact }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -27,6 +30,16 @@ struct EqualizeView: View {
                     Menu("Choose measurement") { measurementMenu }
                 }
                 .frame(maxHeight: .infinity)
+            } else if isShort {
+                // Landscape gives the plot the whole screen; the readouts and controls float.
+                ResponsePlot(series: series, kind: .magnitude, grid: state.grid,
+                             lowFrequency: $low, highFrequency: $high)
+                .padding(.horizontal, 8)
+                .padding(.trailing, 68)
+                .overlay(alignment: .bottomLeading) {
+                    compactSummary.padding(.leading, 44).padding(.bottom, 34)
+                }
+                .overlay(alignment: .trailing) { toolbar.padding(.trailing, 16) }
             } else {
                 ResponsePlot(series: series, kind: .magnitude, grid: state.grid,
                              lowFrequency: $low, highFrequency: $high)
@@ -86,6 +99,23 @@ struct EqualizeView: View {
         .padding(.top, 4)
     }
 
+    /// The same three numbers as the portrait summary, on one line and tucked into a corner
+    /// where they do not sit on top of the traces.
+    private var compactSummary: some View {
+        HStack(spacing: 10) {
+            Text("\(correction?.filters.count ?? 0) filters")
+            Text(String(format: "max %+.1f dB", correction?.maxBoostDB ?? 0))
+                .foregroundStyle((correction?.maxBoostDB ?? 0) > state.eqSettings.maxGainDB + 0.01
+                                 ? .red : .secondary)
+            Text(String(format: "preamp %.1f dB", correction?.preampDB ?? 0))
+        }
+        .font(.caption.monospacedDigit())
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(.regularMaterial, in: Capsule())
+    }
+
     private func stat(_ label: String, _ value: String, warn: Bool = false) -> some View {
         VStack(spacing: 1) {
             Text(value)
@@ -96,9 +126,14 @@ struct EqualizeView: View {
         .frame(maxWidth: .infinity)
     }
 
+    private var controlLayout: AnyLayout {
+        isShort ? AnyLayout(VStackLayout(spacing: 10))
+                : AnyLayout(HStackLayout(spacing: 18))
+    }
+
     private var toolbar: some View {
         GlassGroup {
-            HStack(spacing: 18) {
+            controlLayout {
                 Button { showSettings = true } label: {
                     Image(systemName: "gearshape").font(.body).frame(width: 30, height: 30)
                 }
@@ -111,19 +146,24 @@ struct EqualizeView: View {
                 .disabled(correction?.filters.isEmpty ?? true)
 
                 Button { showExport = true } label: {
-                    Label("Export", systemImage: "square.and.arrow.up")
-                        .font(.subheadline.weight(.semibold))
-                        .frame(height: 30)
-                        .padding(.horizontal, 6)
+                    if isShort {
+                        Image(systemName: "square.and.arrow.up")
+                            .font(.body).frame(width: 30, height: 30)
+                    } else {
+                        Label("Export", systemImage: "square.and.arrow.up")
+                            .font(.subheadline.weight(.semibold))
+                            .frame(height: 30)
+                            .padding(.horizontal, 6)
+                    }
                 }
                 .prominentAction()
                 .disabled(correction?.filters.isEmpty ?? true)
             }
-            .floatingBar()
+            .floatingBar(vertical: isShort)
         }
-        .padding(.top, 6)
-        .padding(.bottom, 10)
-        .frame(maxWidth: .infinity)
+        .padding(.top, isShort ? 0 : 6)
+        .padding(.bottom, isShort ? 0 : 10)
+        .frame(maxWidth: isShort ? nil : .infinity)
     }
 
     private var series: [PlotSeries] {
@@ -198,14 +238,12 @@ struct EqualizeSetupView: View {
                 }
 
                 Section("Range") {
-                    LabeledContent("From") {
-                        Text(String(format: "%.0f Hz", state.eqSettings.minFrequency))
-                    }
-                    Slider(value: $state.eqSettings.minFrequency, in: 20...200, step: 5)
-                    LabeledContent("To") {
-                        Text(String(format: "%.0f Hz", state.eqSettings.maxFrequency))
-                    }
-                    Slider(value: $state.eqSettings.maxFrequency, in: 100...20_000, step: 50)
+                    FrequencyField(title: "From", value: $state.eqSettings.minFrequency,
+                                   range: 20...2_000)
+                        .onChange(of: state.eqSettings.minFrequency) { _, _ in keepRangeOrdered() }
+                    FrequencyField(title: "To", value: $state.eqSettings.maxFrequency,
+                                   range: 40...20_000)
+                        .onChange(of: state.eqSettings.maxFrequency) { _, _ in keepRangeOrdered() }
                     Text("Most of the benefit is below a few hundred hertz, where the room "
                          + "rather than the speaker is in charge. Correcting the top end "
                          + "spends filters on things that are barely audible.")
@@ -242,6 +280,16 @@ struct EqualizeSetupView: View {
                     Button("Done") { dismiss() }
                 }
             }
+        }
+    }
+}
+
+private extension EqualizeSetupView {
+    /// Keep the range the right way round, whichever end was just moved.
+    func keepRangeOrdered() {
+        let lowest = state.eqSettings.minFrequency
+        if state.eqSettings.maxFrequency < lowest * 1.2 {
+            state.eqSettings.maxFrequency = Swift.min(lowest * 1.2, 20_000)
         }
     }
 }
