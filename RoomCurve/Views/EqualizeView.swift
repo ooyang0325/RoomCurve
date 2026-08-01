@@ -198,14 +198,12 @@ struct EqualizeSetupView: View {
                 }
 
                 Section("Range") {
-                    LabeledContent("From") {
-                        Text(String(format: "%.0f Hz", state.eqSettings.minFrequency))
-                    }
-                    Slider(value: $state.eqSettings.minFrequency, in: 20...200, step: 5)
-                    LabeledContent("To") {
-                        Text(String(format: "%.0f Hz", state.eqSettings.maxFrequency))
-                    }
-                    Slider(value: $state.eqSettings.maxFrequency, in: 100...20_000, step: 50)
+                    FrequencyField(title: "From", value: $state.eqSettings.minFrequency,
+                                   range: 20...2_000)
+                        .onChange(of: state.eqSettings.minFrequency) { _, _ in keepRangeOrdered() }
+                    FrequencyField(title: "To", value: $state.eqSettings.maxFrequency,
+                                   range: 40...20_000)
+                        .onChange(of: state.eqSettings.maxFrequency) { _, _ in keepRangeOrdered() }
                     Text("Most of the benefit is below a few hundred hertz, where the room "
                          + "rather than the speaker is in charge. Correcting the top end "
                          + "spends filters on things that are barely audible.")
@@ -242,6 +240,16 @@ struct EqualizeSetupView: View {
                     Button("Done") { dismiss() }
                 }
             }
+        }
+    }
+}
+
+private extension EqualizeSetupView {
+    /// Keep the range the right way round, whichever end was just moved.
+    func keepRangeOrdered() {
+        let lowest = state.eqSettings.minFrequency
+        if state.eqSettings.maxFrequency < lowest * 1.2 {
+            state.eqSettings.maxFrequency = Swift.min(lowest * 1.2, 20_000)
         }
     }
 }
