@@ -1,0 +1,63 @@
+{
+  "fill-specializations": [
+    {
+      "value": "automatic"
+    },
+    {
+      "appearance": "dark",
+      "value": {
+        "solid": "srgb:0.07843,0.06275,0.05882,1.00000"
+      }
+    }
+  ],
+  "groups": [
+    {
+      "blend-mode": "normal",
+      "blur-material": null,
+      "layers": [
+        {
+          "glass": true,
+          "hidden": false,
+          "image-name": "intersection.svg",
+          "name": "intersection"
+        },
+        {
+          "blend-mode": "normal",
+          "image-name": "large_dome.svg",
+          "name": "large_dome",
+          "opacity": 1
+        },
+        {
+          "image-name": "small_dome.svg",
+          "name": "small_dome"
+        },
+        {
+          "fill": "automatic",
+          "image-name": "baseline.svg",
+          "name": "baseline"
+        }
+      ],
+      "lighting": "individual",
+      "refractivity": {
+        "depth": 0,
+        "enabled": true,
+        "strength": 1
+      },
+      "shadow": {
+        "kind": "layer-color",
+        "opacity": 0.5
+      },
+      "specular": false,
+      "translucency": {
+        "enabled": true,
+        "value": 0.3
+      }
+    }
+  ],
+  "supported-platforms": {
+    "circles": [
+      "watchOS"
+    ],
+    "squares": "shared"
+  }
+}
