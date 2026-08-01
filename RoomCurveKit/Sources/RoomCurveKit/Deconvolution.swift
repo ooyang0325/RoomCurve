@@ -31,7 +31,8 @@ public struct ImpulseResponse: Sendable {
     /// Arrival time of this measurement relative to the timing chirp, in seconds. Comparable
     /// across measurements as long as the chirp came from the same speaker each time.
     public let acousticDelay: Double
-    /// Ambient noise captured before the test signal, used for signal-to-noise blanking.
+    /// Ambient noise put through the same deconvolution as the measurement, so the two can be
+    /// compared directly. Same length as `samples`.
     public let noiseFloor: [Float]
     /// Sample-clock drift between playback and capture, in parts per million, when both
     /// timing chirps were found.
@@ -70,11 +71,6 @@ public enum Deconvolver {
             throw MeasurementError.testSignalNotDetected
         }
 
-        // Ambient noise: the stretch of recording before the chirp reached the microphone.
-        let noiseEnd = Swift.max(0, chirpArrival - Int(0.05 * sr))
-        let noiseStart = Swift.max(0, noiseEnd - Int(1.0 * sr))
-        let noiseFloor = noiseStart < noiseEnd ? Array(recording[noiseStart..<noiseEnd]) : []
-
         // Deconvolve a window around where the sweep is expected, rather than the whole
         // recording: it halves the FFT size and keeps unrelated noise out of the result.
         let margin = Int(0.25 * sr)
@@ -87,6 +83,12 @@ public enum Deconvolver {
             throw MeasurementError.recordingTooShort
         }
         let window = Array(recording[windowStart..<windowEnd])
+
+        // Ambient noise: a stretch of the recording containing no test signal, put through the
+        // same deconvolution so it is directly comparable with the measurement.
+        let noiseFloor = deconvolvedNoise(recording: recording, stimulus: stimulus,
+                                          length: windowEnd - windowStart,
+                                          avoiding: windowStart..<windowEnd)
 
         let deconvolved = linearConvolve(window, stimulus.inverseFilter)
 
@@ -107,8 +109,14 @@ public enum Deconvolver {
         let drift = estimateClockDrift(recording: recording, stimulus: stimulus,
                                        firstChirpAt: chirpArrival)
 
+        // Cut the noise reference to the same length and offset as the response, so the two
+        // can be windowed identically and compared bin for bin with no length correction.
+        let noiseReference = noiseFloor.isEmpty ? []
+            : extract(noiseFloor, peak: Swift.min(peak, noiseFloor.count - 1),
+                      sampleRate: sr, extraDelay: 0)
+
         return ImpulseResponse(samples: ir, sampleRate: sr, acousticDelay: acousticDelay,
-                               noiseFloor: noiseFloor, clockDriftPPM: drift)
+                               noiseFloor: noiseReference, clockDriftPPM: drift)
     }
 
     // MARK: - Steps
@@ -197,6 +205,25 @@ public enum Deconvolver {
             if source >= 0 && source < deconvolved.count { out[i] = deconvolved[source] }
         }
         return out
+    }
+
+    /// Deconvolve a stretch of recording that contains no test signal.
+    ///
+    /// The point is to measure the noise floor *after* the same processing the measurement went
+    /// through, so the comparison is like for like. Taking the noise from the tail of the
+    /// impulse response instead — which is the obvious shortcut — measures the room still
+    /// ringing rather than the noise, and in the bass a room rings for a long time. That reads
+    /// as poor signal-to-noise and blanks most of the trace.
+    ///
+    /// The recording continues for seconds after the test signal ends, so its tail is genuine
+    /// ambient noise.
+    static func deconvolvedNoise(recording: [Float], stimulus: SweepStimulus,
+                                 length: Int, avoiding measured: Range<Int>) -> [Float] {
+        let tailStart = Swift.max(measured.upperBound, recording.count - length)
+        guard recording.count - tailStart > Int(0.2 * stimulus.config.sampleRate) else {
+            return []
+        }
+        return linearConvolve(Array(recording[tailStart...]), stimulus.inverseFilter)
     }
 
     /// Compare the measured interval between the two chirps with the interval they were

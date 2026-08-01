@@ -23,17 +23,10 @@ struct RoomCurveApp: App {
     private var root: some View {
         #if DEBUG
         if let screen = DemoLaunch.requestedScreen {
-            NavigationStack {
-                switch screen {
-                case "sweep": SweepView()
-                case "realtime": RealTimeView()
-                case "equalize": EqualizeView()
-                case "curve": CurveEditorView()
-                case "measurements": MeasurementsView()
-                default: MenuView()
-                }
-            }
-            .onAppear { if state.captures.isEmpty { DemoLaunch.seed(state) } }
+            // Push the screen onto a real stack rooted at the menu, so Back behaves exactly
+            // as it does when you navigate there yourself.
+            DemoLaunch.Root(screen: screen)
+                .onAppear { if state.captures.isEmpty { DemoLaunch.seed(state) } }
         } else {
             MenuView()
         }

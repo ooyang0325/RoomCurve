@@ -1,5 +1,6 @@
 #if DEBUG
 import Foundation
+import SwiftUI
 import RoomCurveKit
 
 /// Launch straight into a screen with synthetic data, so screens can be inspected from the
@@ -13,6 +14,33 @@ enum DemoLaunch {
 
     static var requestedScreen: String? {
         UserDefaults.standard.string(forKey: "demoScreen")
+    }
+
+    /// The menu with one screen already pushed on top of it, so the back button and the edge
+    /// swipe work the same way they do in normal use.
+    struct Root: View {
+        let screen: String
+
+        init(screen: String) { self.screen = screen }
+
+        @State private var path: [String] = []
+
+        var body: some View {
+            NavigationStack(path: $path) {
+                MenuView()
+                    .navigationDestination(for: String.self) { destination in
+                        switch destination {
+                        case "sweep": SweepView()
+                        case "realtime": RealTimeView()
+                        case "equalize": EqualizeView()
+                        case "curve": CurveEditorView()
+                        case "measurements": MeasurementsView()
+                        default: EmptyView()
+                        }
+                    }
+            }
+            .onAppear { if path.isEmpty { path = [screen] } }
+        }
     }
 
     /// A synthetic room: a couple of modal peaks, a suckout, and a low-frequency rolloff.

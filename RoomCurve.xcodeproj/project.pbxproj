@@ -101,7 +101,7 @@
 			mainGroup = 732214A7301E07A40068920F;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				A1000000301E07A40068920F /* XCLocalSwiftPackageReference "../RoomCurveKit" */,
+				A1000000301E07A40068920F /* XCLocalSwiftPackageReference "RoomCurveKit" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 732214B1301E07A40068920F /* Products */;
@@ -134,9 +134,9 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		A1000000301E07A40068920F /* XCLocalSwiftPackageReference "../RoomCurveKit" */ = {
+		A1000000301E07A40068920F /* XCLocalSwiftPackageReference "RoomCurveKit" */ = {
 			isa = XCLocalSwiftPackageReference;
-			relativePath = ../RoomCurveKit;
+			relativePath = RoomCurveKit;
 		};
 /* End XCLocalSwiftPackageReference section */
 

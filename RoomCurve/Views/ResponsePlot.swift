@@ -198,6 +198,12 @@ struct ResponsePlot: View {
                 guard let plotFrame = proxy.plotFrame else { return }
                 let origin = geometry[plotFrame].origin
 
+                // Ignore drags that begin at the very edge; that swipe belongs to navigation.
+                if panAnchor == nil && cursorFrequency == nil
+                    && value.startLocation.x - origin.x < backSwipeEdge {
+                    return
+                }
+
                 if cursorFrequency != nil {
                     let x = value.location.x - origin.x
                     if let frequency: Double = proxy.value(atX: x) {

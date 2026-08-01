@@ -113,36 +113,37 @@ struct SweepView: View {
             .pickerStyle(.segmented)
             .padding(.horizontal)
 
-            HStack(spacing: 22) {
-                button("gearshape", "Measure setup") { showMeasureSetup = true }
-                button("chart.xyaxis.line", "Plot setup") { showPlotSetup = true }
+            GlassGroup {
+                HStack(spacing: 18) {
+                    button("gearshape", "Measure setup") { showMeasureSetup = true }
+                    button("chart.xyaxis.line", "Plot setup") { showPlotSetup = true }
 
-                Button {
-                    measuring ? cancel() : measure()
-                } label: {
-                    ZStack {
-                        Circle()
-                            .fill(measuring ? Color.red : Color.accentColor)
-                            .frame(width: 62, height: 62)
-                        if measuring {
-                            ProgressView().tint(.white)
-                        } else {
-                            Image(systemName: "waveform.badge.magnifyingglass")
-                                .font(.title2)
-                                .foregroundStyle(.white)
+                    Button {
+                        measuring ? cancel() : measure()
+                    } label: {
+                        Group {
+                            if measuring {
+                                ProgressView().tint(.white)
+                            } else {
+                                Image(systemName: "waveform.badge.magnifyingglass")
+                                    .font(.title3)
+                            }
                         }
+                        .frame(width: 34, height: 34)
                     }
-                }
-                .buttonStyle(PressableButtonStyle())
-                .accessibilityLabel(measuring ? "Stop measuring" : "Measure")
+                    .tint(measuring ? .red : .accentColor)
+                    .prominentAction()
+                    .accessibilityLabel(measuring ? "Stop measuring" : "Measure")
 
-                button("arrow.uturn.backward", "Undo") { state.undoCapture() }
+                    button("arrow.uturn.backward", "Undo") { state.undoCapture() }
+                        .disabled(state.captures.isEmpty)
+                    button("square.and.arrow.down", "Save") {
+                        saveName = defaultName()
+                        showSave = true
+                    }
                     .disabled(state.captures.isEmpty)
-                button("square.and.arrow.down", "Save") {
-                    saveName = defaultName()
-                    showSave = true
                 }
-                .disabled(state.captures.isEmpty)
+                .floatingBar()
             }
 
             HStack {
@@ -157,16 +158,18 @@ struct SweepView: View {
             .foregroundStyle(.secondary)
             .padding(.horizontal)
         }
-        .padding(.vertical, 10)
-        .background(.bar)
+        .padding(.top, 4)
+        .padding(.bottom, 10)
     }
 
     private func button(_ icon: String, _ label: String,
                         action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Image(systemName: icon).font(.title3)
+            Image(systemName: icon)
+                .font(.body)
+                .frame(width: 30, height: 30)
         }
-        .buttonStyle(PressableButtonStyle())
+        .secondaryAction()
         .accessibilityLabel(label)
     }
 

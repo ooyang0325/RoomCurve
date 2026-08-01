@@ -16,6 +16,7 @@ struct CurveEditorView: View {
     @State private var showSource = false
     @State private var showNew = false
     @State private var newName = ""
+    @State private var confirmDelete = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// A tap waiting to see whether a second one follows it.
@@ -42,6 +43,11 @@ struct CurveEditorView: View {
                     }
                     Divider()
                     Button("New curve…") { showNew = true }
+                    if let curve, !curve.isBuiltIn {
+                        Button("Delete \"\(curve.name)\"", role: .destructive) {
+                            confirmDelete = true
+                        }
+                    }
                 } label: {
                     Image(systemName: "list.bullet")
                 }
@@ -61,6 +67,14 @@ struct CurveEditorView: View {
                 ])
                 original = nil
             }
+        }
+        .confirmationDialog("Delete this curve?", isPresented: $confirmDelete,
+                            titleVisibility: .visible) {
+            Button("Delete", role: .destructive) { deleteCurrent() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("\(curve?.name ?? "") will be removed. Curves that ship with the app cannot "
+                 + "be deleted.")
         }
         .onAppear { if curve == nil { select(state.targetCurve(from: store)) } }
     }
@@ -129,6 +143,9 @@ struct CurveEditorView: View {
                     .onChanged { value in
                         guard let plotFrame = proxy.plotFrame, var curve else { return }
                         let point = local(value.location, plotFrame, geometry)
+
+                        // The leading edge belongs to the back swipe, not to the editor.
+                        if gestureStart == nil && point.x < backSwipeEdge { return }
 
                         // Grab on touch-down so the point reacts before the finger moves.
                         if gestureStart == nil {
@@ -251,44 +268,55 @@ struct CurveEditorView: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
 
-            HStack(spacing: 22) {
-                Button {
-                    if let original { curve = original }
-                } label: {
-                    Image(systemName: "arrow.uturn.backward").font(.title3)
-                }
-                .buttonStyle(PressableButtonStyle())
-                .disabled(!hasChanges)
+            GlassGroup {
+                HStack(spacing: 18) {
+                    Button { if let original { curve = original } } label: {
+                        Image(systemName: "arrow.uturn.backward")
+                            .font(.body).frame(width: 30, height: 30)
+                    }
+                    .secondaryAction()
+                    .disabled(!hasChanges)
 
-                Button { showSource = true } label: {
-                    Image(systemName: "text.alignleft").font(.title3)
-                }
-                .buttonStyle(PressableButtonStyle())
-                .disabled(curve == nil)
+                    Button { showSource = true } label: {
+                        Image(systemName: "text.alignleft")
+                            .font(.body).frame(width: 30, height: 30)
+                    }
+                    .secondaryAction()
+                    .disabled(curve == nil)
 
-                Button { save() } label: {
-                    Label("Save", systemImage: "square.and.arrow.down")
-                        .font(.headline)
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 10)
-                        .background(Color.accentColor, in: Capsule())
-                        .foregroundStyle(.white)
+                    Button { save() } label: {
+                        Label("Save", systemImage: "square.and.arrow.down")
+                            .font(.subheadline.weight(.semibold))
+                            .frame(height: 30)
+                            .padding(.horizontal, 6)
+                    }
+                    .prominentAction()
+                    .disabled(curve == nil)
                 }
-                .buttonStyle(PressableButtonStyle())
-                .disabled(curve == nil)
+                .floatingBar()
             }
 
             Text("Drag points to shape the curve. Tap to add, double tap to remove.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
-        .padding(.vertical, 10)
-        .background(.bar)
+        .padding(.top, 4)
+        .padding(.bottom, 10)
     }
 
     private var hasChanges: Bool {
         guard let curve, let original else { return curve != nil && original == nil }
         return curve.points != original.points
+    }
+
+    private func deleteCurrent() {
+        guard let curve, !curve.isBuiltIn else { return }
+        store.delete(curve: curve)
+        state.show("Deleted \(curve.name)")
+        let fallback = store.targetCurves.first { !$0.isBuiltIn && $0.name != curve.name }
+            ?? TargetCurve.bundled[0]
+        state.selectedTargetName = fallback.name
+        select(fallback)
     }
 
     private func select(_ candidate: TargetCurve) {

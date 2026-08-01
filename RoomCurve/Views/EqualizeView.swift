@@ -97,32 +97,33 @@ struct EqualizeView: View {
     }
 
     private var toolbar: some View {
-        HStack(spacing: 22) {
-            Button { showSettings = true } label: {
-                Image(systemName: "gearshape").font(.title3)
-            }
-            .buttonStyle(PressableButtonStyle())
+        GlassGroup {
+            HStack(spacing: 18) {
+                Button { showSettings = true } label: {
+                    Image(systemName: "gearshape").font(.body).frame(width: 30, height: 30)
+                }
+                .secondaryAction()
 
-            Button { showFilters = true } label: {
-                Image(systemName: "list.number").font(.title3)
-            }
-            .buttonStyle(PressableButtonStyle())
-            .disabled(correction?.filters.isEmpty ?? true)
+                Button { showFilters = true } label: {
+                    Image(systemName: "list.number").font(.body).frame(width: 30, height: 30)
+                }
+                .secondaryAction()
+                .disabled(correction?.filters.isEmpty ?? true)
 
-            Button { showExport = true } label: {
-                Label("Export", systemImage: "square.and.arrow.up")
-                    .font(.headline)
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 10)
-                    .background(Color.accentColor, in: Capsule())
-                    .foregroundStyle(.white)
+                Button { showExport = true } label: {
+                    Label("Export", systemImage: "square.and.arrow.up")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(height: 30)
+                        .padding(.horizontal, 6)
+                }
+                .prominentAction()
+                .disabled(correction?.filters.isEmpty ?? true)
             }
-            .buttonStyle(PressableButtonStyle())
-            .disabled(correction?.filters.isEmpty ?? true)
+            .floatingBar()
         }
-        .padding(.vertical, 12)
+        .padding(.top, 6)
+        .padding(.bottom, 10)
         .frame(maxWidth: .infinity)
-        .background(.bar)
     }
 
     private var series: [PlotSeries] {

@@ -14,6 +14,8 @@ struct RealTimeView: View {
     @State private var noise: PinkNoiseStimulus?
     @State private var showPlotSetup = false
     @State private var refresh: Task<Void, Never>?
+    @State private var saveName = ""
+    @State private var showSave = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -40,6 +42,13 @@ struct RealTimeView: View {
             }
         }
         .sheet(isPresented: $showPlotSetup) { PlotSetupView() }
+        .alert("Save measurement", isPresented: $showSave) {
+            TextField("Name", text: $saveName)
+            Button("Cancel", role: .cancel) {}
+            Button("Save") { save() }
+        } message: {
+            Text("Saves the current response so it can be equalised or compared later.")
+        }
         .onDisappear { stop() }
     }
 
@@ -61,41 +70,51 @@ struct RealTimeView: View {
             .multilineTextAlignment(.center)
             .padding(.horizontal)
 
-            HStack(spacing: 22) {
-                Button {
-                    showPlotSetup = true
-                } label: {
-                    Image(systemName: "chart.xyaxis.line").font(.title3)
-                }
-                .buttonStyle(PressableButtonStyle())
-
-                Button {
-                    running ? stop() : start()
-                } label: {
-                    ZStack {
-                        Circle()
-                            .fill(running ? Color.red : Color.accentColor)
-                            .frame(width: 62, height: 62)
-                        Image(systemName: running ? "stop.fill" : "play.fill")
-                            .font(.title2)
-                            .foregroundStyle(.white)
+            GlassGroup {
+                HStack(spacing: 18) {
+                    Button { showPlotSetup = true } label: {
+                        Image(systemName: "chart.xyaxis.line")
+                            .font(.body).frame(width: 30, height: 30)
                     }
-                }
-                .buttonStyle(PressableButtonStyle())
+                    .secondaryAction()
 
-                Button {
-                    analyser?.reset()
-                    response = nil
-                } label: {
-                    Image(systemName: "arrow.counterclockwise").font(.title3)
+                    Button {
+                        running ? stop() : start()
+                    } label: {
+                        Image(systemName: running ? "stop.fill" : "play.fill")
+                            .font(.title3)
+                            .frame(width: 34, height: 34)
+                    }
+                    .tint(running ? .red : .accentColor)
+                    .prominentAction()
+                    .accessibilityLabel(running ? "Stop" : "Start")
+
+                    Button {
+                        saveName = defaultName()
+                        showSave = true
+                    } label: {
+                        Image(systemName: "square.and.arrow.down")
+                            .font(.body).frame(width: 30, height: 30)
+                    }
+                    .secondaryAction()
+                    .disabled(response == nil)
+                    .accessibilityLabel("Save measurement")
+
+                    Button {
+                        analyser?.reset()
+                        response = nil
+                    } label: {
+                        Image(systemName: "arrow.counterclockwise")
+                            .font(.body).frame(width: 30, height: 30)
+                    }
+                    .secondaryAction()
+                    .disabled(response == nil)
                 }
-                .buttonStyle(PressableButtonStyle())
-                .disabled(response == nil)
+                .floatingBar()
             }
             .padding(.bottom, 6)
         }
-        .padding(.vertical, 10)
-        .background(.bar)
+        .padding(.top, 4)
     }
 
     private var series: [PlotSeries] {
@@ -141,6 +160,29 @@ struct RealTimeView: View {
                 let calibrated = engine.response().map { state.calibrated($0, store: store) }
                 await MainActor.run { response = calibrated }
             }
+        }
+    }
+
+    private func defaultName() -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HHmm"
+        return "Real Time \(formatter.string(from: Date()))"
+    }
+
+    /// Save a pink-noise measurement as an impulse response.
+    ///
+    /// Pink noise only ever recovers magnitude, but everything downstream — the store, the
+    /// equaliser, the exporters — already speaks impulse responses. Rendering the magnitude
+    /// into a minimum-phase one means real-time measurements can generate room correction
+    /// through exactly the same path as swept-sine ones, with nothing else changed.
+    private func save() {
+        guard let response else { return }
+        do {
+            try store.save(response.asImpulseResponse(sampleRate: audio.sampleRate),
+                           name: saveName)
+            state.show("Saved \(saveName) — equalise it from the Equalize tool")
+        } catch {
+            state.errorMessage = error.localizedDescription
         }
     }
 

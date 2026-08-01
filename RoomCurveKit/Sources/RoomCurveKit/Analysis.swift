@@ -224,33 +224,35 @@ public enum Analyser {
 
     /// Per-frequency signal-to-noise.
     ///
-    /// The noise reference is taken from the far tail of the impulse response, past the point
-    /// where any real room has decayed. That segment has been through exactly the same
-    /// deconvolution as the signal, so the two are directly comparable — which would not be
-    /// true of the raw pre-sweep recording. Spectra are scaled to power per sample so the
-    /// differing segment lengths cancel.
+    /// The reference is ambient noise recorded with no test signal playing, put through the
+    /// same deconvolution as the measurement, and gated with the same window. Identical
+    /// processing and identical length means the two spectra can be divided directly.
+    ///
+    /// The tempting shortcut — taking the noise from the tail of the impulse response — measures
+    /// the room still decaying rather than the noise floor, and rooms decay for a long time
+    /// down low. That reads as poor signal-to-noise exactly where the measurement matters most,
+    /// and blanks most of the trace.
+    ///
+    /// With no usable reference, nothing is blanked. Showing the whole measurement and trusting
+    /// the user beats hiding most of it on the strength of a bad noise estimate.
     static func signalToNoise(ir: ImpulseResponse, peak: Int, window: IRWindow,
                               signalMagnitude: [Double], fft: FFTProcessor,
                               binSpacing: Double, grid: LogGrid) -> [Double] {
-        let sr = ir.sampleRate
-        let noiseStart = Swift.min(ir.samples.count, peak + Int(window.right * sr) + Int(0.05 * sr))
-        guard ir.samples.count - noiseStart > Int(0.02 * sr) else {
+        guard ir.noiseFloor.count == ir.samples.count else {
             return [Double](repeating: .infinity, count: grid.count)
         }
-        let noise = Array(ir.samples[noiseStart...])
-        let noiseSpectrum = fft.forward(noise)
+        let gatedNoise = gate(ir.noiseFloor, peak: peak, window: window,
+                              sampleRate: ir.sampleRate)
+        guard !gatedNoise.isEmpty else {
+            return [Double](repeating: .infinity, count: grid.count)
+        }
         let usable = fft.length / 2
-        let noiseMagnitude = Array(noiseSpectrum.magnitude[0..<usable]).map(Double.init)
-        let gridNoise = grid.resample(bins: noiseMagnitude, binSpacing: binSpacing)
-
-        let signalLength = Double(Int(window.duration * sr))
-        let noiseLength = Double(noise.count)
-        let lengthCorrection = (signalLength / noiseLength).squareRoot()
+        let magnitude = Array(fft.forward(gatedNoise).magnitude[0..<usable]).map(Double.init)
+        let gridNoise = grid.resample(bins: magnitude, binSpacing: binSpacing)
 
         return zip(signalMagnitude, gridNoise).map { signal, noise in
-            let scaledNoise = noise * lengthCorrection
-            guard scaledNoise > 1e-12 else { return Double.infinity }
-            return 20 * Foundation.log10(signal / scaledNoise)
+            guard noise > 1e-12 else { return Double.infinity }
+            return 20 * Foundation.log10(signal / noise)
         }
     }
 }

@@ -52,26 +52,92 @@ public struct LogGrid: Sendable, Equatable {
 // MARK: - Resampling onto the grid
 
 extension LogGrid {
-    /// Linearly interpolate scattered `(frequency, value)` points onto the grid.
+    /// Interpolate scattered `(frequency, value)` points onto the grid.
     ///
-    /// Interpolation happens in log-frequency, which is what makes a 3-point target curve
-    /// look like a smooth slope rather than a bent stick. Outside the supplied range the
-    /// first/last value is held flat, matching the behaviour of REW and HouseCurve curve files.
+    /// Monotone cubic (Fritsch–Carlson) interpolation in log-frequency. Straight lines between
+    /// points leave a visible corner at every control point, and a target curve is meant to
+    /// describe a smooth tonal balance rather than a series of hinges. Monotone cubic is the
+    /// right kind of smooth here: unlike a natural spline it cannot overshoot between points,
+    /// so dragging one point in the editor can never make the curve bulge somewhere else.
+    ///
+    /// With only two points it reduces to a straight line, and with densely sampled data — a
+    /// published target curve, a microphone calibration file — it tracks the points as closely
+    /// as linear interpolation would.
+    ///
+    /// Outside the supplied range the first and last values are held flat, matching how every
+    /// other measurement tool reads these files.
     ///
     /// - Parameter points: must be sorted by ascending frequency.
     public func interpolate(points: [(frequency: Double, value: Double)]) -> [Double] {
-        guard let first = points.first else { return [Double](repeating: 0, count: count) }
-        guard points.count > 1 else { return [Double](repeating: first.value, count: count) }
+        guard let first = points.first, let last = points.last else {
+            return [Double](repeating: 0, count: count)
+        }
+        guard points.count > 2 else {
+            guard points.count == 2 else {
+                return [Double](repeating: first.value, count: count)
+            }
+            let x0 = log2(first.frequency), x1 = log2(last.frequency)
+            return frequencies.map { f in
+                if f <= first.frequency { return first.value }
+                if f >= last.frequency { return last.value }
+                let t = (log2(f) - x0) / (x1 - x0)
+                return first.value + t * (last.value - first.value)
+            }
+        }
+
+        let x = points.map { log2($0.frequency) }
+        let y = points.map(\.value)
+        let n = points.count
+
+        // Secant slopes between neighbouring points.
+        var delta = [Double](repeating: 0, count: n - 1)
+        for i in 0..<(n - 1) {
+            let h = x[i + 1] - x[i]
+            delta[i] = h > 0 ? (y[i + 1] - y[i]) / h : 0
+        }
+
+        // Tangents: average of neighbouring secants inside, one-sided at the ends.
+        var tangent = [Double](repeating: 0, count: n)
+        tangent[0] = delta[0]
+        tangent[n - 1] = delta[n - 2]
+        for i in 1..<(n - 1) {
+            tangent[i] = delta[i - 1] * delta[i] <= 0 ? 0 : (delta[i - 1] + delta[i]) / 2
+        }
+
+        // Fritsch–Carlson limiting — what keeps the curve from overshooting.
+        for i in 0..<(n - 1) {
+            if delta[i] == 0 {
+                tangent[i] = 0
+                tangent[i + 1] = 0
+                continue
+            }
+            let a = tangent[i] / delta[i], b = tangent[i + 1] / delta[i]
+            let s = a * a + b * b
+            if s > 9 {
+                let scale = 3 / s.squareRoot()
+                tangent[i] = scale * a * delta[i]
+                tangent[i + 1] = scale * b * delta[i]
+            }
+        }
 
         var out = [Double](repeating: 0, count: count)
-        var j = 0
-        for (i, f) in frequencies.enumerated() {
-            if f <= first.frequency { out[i] = first.value; continue }
-            if f >= points[points.count - 1].frequency { out[i] = points[points.count - 1].value; continue }
-            while j + 1 < points.count - 1 && points[j + 1].frequency < f { j += 1 }
-            let a = points[j], b = points[j + 1]
-            let t = (log2(f) - log2(a.frequency)) / (log2(b.frequency) - log2(a.frequency))
-            out[i] = a.value + t * (b.value - a.value)
+        var segment = 0
+        for (index, f) in frequencies.enumerated() {
+            if f <= first.frequency { out[index] = first.value; continue }
+            if f >= last.frequency { out[index] = last.value; continue }
+
+            let xf = log2(f)
+            while segment + 1 < n - 1 && x[segment + 1] < xf { segment += 1 }
+            let h = x[segment + 1] - x[segment]
+            guard h > 0 else { out[index] = y[segment]; continue }
+
+            // Cubic Hermite basis.
+            let t = (xf - x[segment]) / h
+            let t2 = t * t, t3 = t2 * t
+            out[index] = (2 * t3 - 3 * t2 + 1) * y[segment]
+                + (t3 - 2 * t2 + t) * h * tangent[segment]
+                + (-2 * t3 + 3 * t2) * y[segment + 1]
+                + (t3 - t2) * h * tangent[segment + 1]
         }
         return out
     }
