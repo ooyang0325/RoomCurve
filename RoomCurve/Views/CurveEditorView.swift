@@ -20,6 +20,9 @@ struct CurveEditorView: View {
     @State private var confirmDiscard = false
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+
+    private var isShort: Bool { verticalSizeClass == .compact }
 
     /// A tap waiting to see whether a second one follows it.
     private struct PendingTap {
@@ -31,9 +34,17 @@ struct CurveEditorView: View {
     private let gainRange = -20.0...20.0
 
     var body: some View {
-        VStack(spacing: 0) {
-            editor
-            footer
+        Group {
+            if isShort {
+                editor
+                    .padding(.trailing, 68)
+                    .overlay(alignment: .trailing) { controls.padding(.trailing, 16) }
+            } else {
+                VStack(spacing: 0) {
+                    editor
+                    footer
+                }
+            }
         }
         .navigationTitle("Curve Editor")
         .navigationBarTitleDisplayMode(.inline)
@@ -319,8 +330,20 @@ struct CurveEditorView: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
 
-            GlassGroup {
-                HStack(spacing: 18) {
+            controls
+        }
+        .padding(.top, 4)
+        .padding(.bottom, 10)
+    }
+
+    private var controlLayout: AnyLayout {
+        isShort ? AnyLayout(VStackLayout(spacing: 10))
+                : AnyLayout(HStackLayout(spacing: 18))
+    }
+
+    private var controls: some View {
+        GlassGroup {
+                controlLayout {
                     Button { if let original { curve = original } } label: {
                         Image(systemName: "arrow.uturn.backward")
                             .font(.body).frame(width: 30, height: 30)
@@ -344,15 +367,8 @@ struct CurveEditorView: View {
                     .prominentAction()
                     .disabled(curve == nil)
                 }
-                .floatingBar()
-            }
-
-            Text("Drag points to shape the curve. Tap to add, double tap to remove.")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+                .floatingBar(vertical: isShort)
         }
-        .padding(.top, 4)
-        .padding(.bottom, 10)
     }
 
     private var hasChanges: Bool {

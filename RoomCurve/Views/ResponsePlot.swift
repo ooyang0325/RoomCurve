@@ -82,6 +82,7 @@ struct ResponsePlot: View {
                     .lineStyle(StrokeStyle(lineWidth: 1))
             }
         }
+        .padding(.horizontal, 10)
         .chartXScale(domain: lowFrequency...highFrequency, type: .log)
         .chartYScale(domain: yDomain)
         .chartXAxis { axisMarks }
@@ -117,6 +118,9 @@ struct ResponsePlot: View {
                     Text(frequency >= 1_000
                          ? "\(Int(frequency / 1_000))k"
                          : "\(Int(frequency))")
+                    // Without this the label at either end is given only the space left
+                    // between the tick and the edge, and gets truncated to "2…".
+                    .fixedSize()
                 }
             }
         }
@@ -270,6 +274,11 @@ struct ResponsePlot: View {
     /// The whole audible range, and the furthest the plot will ever zoom in.
     static let audible = (low: 15.0, high: 25_000.0)
     static let narrowest = 0.35   // octaves
+
+    /// What a plot shows before anyone touches it: the whole audible band, with a little room
+    /// either side so the 20 Hz and 20 kHz labels are not clipped against the edges.
+    static let defaultLow = 18.0
+    static let defaultHigh = 22_000.0
 }
 
 extension Comparable {

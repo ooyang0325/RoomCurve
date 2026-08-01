@@ -7,8 +7,8 @@ struct SweepView: View {
     @EnvironmentObject private var audio: AudioEngine
 
     @State private var plotKind: PlotKind = .magnitude
-    @State private var low = 20.0
-    @State private var high = 20_000.0
+    @State private var low = ResponsePlot.defaultLow
+    @State private var high = ResponsePlot.defaultHigh
     @State private var measuring = false
     @State private var showMeasureSetup = false
     @State private var showPlotSetup = false
@@ -27,8 +27,8 @@ struct SweepView: View {
                 // The bar floats over the plot, so the plot gives back just enough room at the
                 // bottom for the frequency labels to stay readable underneath it.
                 plot
-                    .padding(.trailing, 74)
-                    .overlay(alignment: .trailing) { controls.padding(.trailing, 6) }
+                    .padding(.trailing, 68)
+                    .overlay(alignment: .trailing) { controls.padding(.trailing, 16) }
             } else {
                 VStack(spacing: 0) {
                     statusStrip
@@ -148,7 +148,7 @@ struct SweepView: View {
     /// The rail keeps the whole plot height and, unlike a bar across the bottom, never sits on
     /// top of the frequency labels.
     private var controlLayout: AnyLayout {
-        isShort ? AnyLayout(VStackLayout(spacing: 16))
+        isShort ? AnyLayout(VStackLayout(spacing: 10))
                 : AnyLayout(HStackLayout(spacing: 18))
     }
 
@@ -183,7 +183,7 @@ struct SweepView: View {
                     }
                     .disabled(state.captures.isEmpty)
                 }
-                .floatingBar()
+                .floatingBar(vertical: isShort)
         }
     }
 

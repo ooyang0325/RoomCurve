@@ -5,8 +5,8 @@ struct EqualizeView: View {
     @EnvironmentObject private var store: Store
     @EnvironmentObject private var state: AppState
 
-    @State private var low = 20.0
-    @State private var high = 20_000.0
+    @State private var low = ResponsePlot.defaultLow
+    @State private var high = ResponsePlot.defaultHigh
     @State private var source: SavedMeasurement?
     @State private var measured: FrequencyResponse?
     @State private var correction: Correction?
@@ -35,11 +35,11 @@ struct EqualizeView: View {
                 ResponsePlot(series: series, kind: .magnitude, grid: state.grid,
                              lowFrequency: $low, highFrequency: $high)
                 .padding(.horizontal, 8)
-                .padding(.trailing, 92)
+                .padding(.trailing, 68)
                 .overlay(alignment: .top) {
                     summary.padding(.horizontal, 40)
                 }
-                .overlay(alignment: .trailing) { toolbar }
+                .overlay(alignment: .trailing) { toolbar.padding(.trailing, 16) }
             } else {
                 ResponsePlot(series: series, kind: .magnitude, grid: state.grid,
                              lowFrequency: $low, highFrequency: $high)
@@ -110,7 +110,7 @@ struct EqualizeView: View {
     }
 
     private var controlLayout: AnyLayout {
-        isShort ? AnyLayout(VStackLayout(spacing: 16))
+        isShort ? AnyLayout(VStackLayout(spacing: 10))
                 : AnyLayout(HStackLayout(spacing: 18))
     }
 
@@ -137,7 +137,7 @@ struct EqualizeView: View {
                 .prominentAction()
                 .disabled(correction?.filters.isEmpty ?? true)
             }
-            .floatingBar()
+            .floatingBar(vertical: isShort)
         }
         .padding(.top, 6)
         .padding(.bottom, 10)

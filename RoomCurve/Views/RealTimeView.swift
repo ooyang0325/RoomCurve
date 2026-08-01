@@ -6,8 +6,8 @@ struct RealTimeView: View {
     @EnvironmentObject private var state: AppState
     @EnvironmentObject private var audio: AudioEngine
 
-    @State private var low = 20.0
-    @State private var high = 20_000.0
+    @State private var low = ResponsePlot.defaultLow
+    @State private var high = ResponsePlot.defaultHigh
     @State private var running = false
     @State private var response: FrequencyResponse?
     @State private var analyser: RealTimeAnalyser?
@@ -24,8 +24,8 @@ struct RealTimeView: View {
         Group {
             if isShort {
                 plot
-                    .padding(.trailing, 74)
-                    .overlay(alignment: .trailing) { controls.padding(.trailing, 6) }
+                    .padding(.trailing, 68)
+                    .overlay(alignment: .trailing) { controls.padding(.trailing, 16) }
             } else {
                 VStack(spacing: 0) {
                     plot
@@ -91,7 +91,7 @@ struct RealTimeView: View {
     }
 
     private var controlLayout: AnyLayout {
-        isShort ? AnyLayout(VStackLayout(spacing: 16))
+        isShort ? AnyLayout(VStackLayout(spacing: 10))
                 : AnyLayout(HStackLayout(spacing: 18))
     }
 
@@ -136,7 +136,7 @@ struct RealTimeView: View {
                     .secondaryAction()
                     .disabled(response == nil)
                 }
-                .floatingBar()
+                .floatingBar(vertical: isShort)
         }
         .padding(.bottom, 6)
     }
