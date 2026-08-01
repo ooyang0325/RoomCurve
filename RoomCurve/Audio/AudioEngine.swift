@@ -214,22 +214,45 @@ final class AudioEngine: ObservableObject {
 
     /// Play the stimulus and record the result.
     ///
-    /// - Parameter externalStimulus: when true nothing is played and the app only listens,
-    ///   for systems the phone cannot connect to directly. The analysis is identical either
-    ///   way, because the chirp carries the timing.
+    /// Only used when the app itself is driving playback, so the timing is known. When the
+    /// signal comes from somewhere else, `startListening()` is used instead — there is no
+    /// sensible fixed window when a person has to walk over and press play.
     func measure(stimulus: SweepStimulus,
                  chirpChannel: OutputChannel = .both,
-                 sweepChannel: OutputChannel = .both,
-                 externalStimulus: Bool = false,
-                 listenFor extraSeconds: Double = 0) async throws -> [Float] {
+                 sweepChannel: OutputChannel = .both) async throws -> [Float] {
         let duration = Double(stimulus.samples.count) / stimulus.config.sampleRate
-        let signal = externalStimulus ? nil : stereoBuffer(for: stimulus,
-                                                          chirpChannel: chirpChannel,
-                                                          sweepChannel: sweepChannel)
-        // Listening longer than the stimulus covers wireless latency, which can run to seconds.
-        let listen = duration + (externalStimulus ? 15 : 3) + extraSeconds
-        return try await run(playing: signal, listeningFor: listen)
+        let signal = stereoBuffer(for: stimulus, chirpChannel: chirpChannel,
+                                  sweepChannel: sweepChannel)
+        // A little longer than the signal, to cover wireless playback latency.
+        return try await run(playing: signal, listeningFor: duration + 3)
     }
+
+    /// Record until told to stop, keeping everything.
+    ///
+    /// External stimulus needs this rather than a fixed window: the test signal is played from
+    /// somewhere else, by a person who has to walk over and press play. Guessing how long that
+    /// takes and recording for exactly that long turns the feature into a race.
+    func startListening() throws {
+        try configureSession()
+        capture.setStreaming(nil)
+        capture.reset()
+
+        let input = engine.inputNode
+        let format = input.outputFormat(forBus: 0)
+        input.removeTap(onBus: 0)
+        input.installTap(onBus: 0, bufferSize: 4096, format: format) { [capture] buffer, _ in
+            capture.append(buffer)
+        }
+        engine.prepare()
+        do { try engine.start() } catch {
+            input.removeTap(onBus: 0)
+            throw AudioEngineError.engineFailed(error.localizedDescription)
+        }
+        isRunning = true
+    }
+
+    /// Everything captured so far, without clearing it.
+    func capturedSamples() -> [Float] { capture.snapshot() }
 
     /// Start continuous capture, handing every buffer to `onAudio`.
     func startRealTime(noise: PinkNoiseStimulus?,
@@ -388,6 +411,11 @@ private final class CaptureBuffer: @unchecked Sendable {
         lock.unlock()
 
         handler?(chunk)
+    }
+
+    func snapshot() -> [Float] {
+        lock.lock(); defer { lock.unlock() }
+        return samples
     }
 
     func drain() -> [Float] {

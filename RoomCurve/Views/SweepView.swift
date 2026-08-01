@@ -237,7 +237,7 @@ struct SweepView: View {
     private func measure() {
         measuring = true
         state.show(state.externalStimulus
-                   ? "Listening — start the test signal on your system"
+                   ? "Listening — play the test signal whenever you are ready"
                    : "Measuring…")
 
         task = Task {
@@ -247,11 +247,15 @@ struct SweepView: View {
                 config.sampleRate = audio.sampleRate
                 let stimulus = SweepGenerator.make(config)
 
-                let recording = try await audio.measure(
-                    stimulus: stimulus,
-                    chirpChannel: state.chirpChannel,
-                    sweepChannel: state.sweepChannel,
-                    externalStimulus: state.externalStimulus)
+                let recording: [Float]
+                if state.externalStimulus {
+                    recording = try await listenForExternalSignal(stimulus: stimulus)
+                } else {
+                    recording = try await audio.measure(
+                        stimulus: stimulus,
+                        chirpChannel: state.chirpChannel,
+                        sweepChannel: state.sweepChannel)
+                }
 
                 guard !Task.isCancelled else { return }
 
@@ -268,6 +272,38 @@ struct SweepView: View {
                 state.errorMessage = error.localizedDescription
             }
         }
+    }
+
+    /// Wait for somebody to press play, then capture the rest of the signal.
+    ///
+    /// Rather than record for a fixed window and hope it overlaps with whatever the other
+    /// device is doing, this listens indefinitely and watches for the moment the room stops
+    /// being quiet. Once the signal starts it keeps recording exactly long enough to hold a
+    /// complete measurement, then stops on its own.
+    private func listenForExternalSignal(stimulus: SweepStimulus) async throws -> [Float] {
+        try audio.startListening()
+        defer { audio.stop() }
+
+        let sampleRate = audio.sampleRate
+        let needed = stimulus.samplesNeededAfterOnset
+        var onset: Int?
+
+        while !Task.isCancelled {
+            try await Task.sleep(for: .milliseconds(200))
+            let captured = audio.capturedSamples()
+
+            if onset == nil {
+                onset = SignalOnset.find(in: captured, sampleRate: sampleRate)
+                if onset != nil { state.show("Test signal detected — capturing") }
+                continue
+            }
+            guard let onset else { continue }
+
+            if captured.count >= onset + needed {
+                return captured
+            }
+        }
+        throw CancellationError()
     }
 
     private func cancel() {
