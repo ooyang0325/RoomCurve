@@ -15,16 +15,37 @@ struct SweepView: View {
     @State private var saveName = ""
     @State private var showSave = false
     @State private var task: Task<Void, Never>?
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+
+    /// Landscape on a phone. The plot wants every pixel of height it can get, so the chrome
+    /// has to stop taking a horizontal slice out of it and float on top instead.
+    private var isShort: Bool { verticalSizeClass == .compact }
 
     var body: some View {
-        VStack(spacing: 0) {
-            statusStrip
-            plot
-            toolbar
+        Group {
+            if isShort {
+                // The bar floats over the plot, so the plot gives back just enough room at the
+                // bottom for the frequency labels to stay readable underneath it.
+                plot
+                    .padding(.trailing, 74)
+                    .overlay(alignment: .trailing) { controls.padding(.trailing, 6) }
+            } else {
+                VStack(spacing: 0) {
+                    statusStrip
+                    plot
+                    toolbar
+                }
+            }
         }
         .navigationTitle("Sweep")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            // In landscape the plot selector moves up into the bar rather than costing a row.
+            if isShort {
+                ToolbarItem(placement: .principal) {
+                    plotPicker.frame(width: 300)
+                }
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 RoutePickerButton().frame(width: 40, height: 40)
             }
@@ -105,16 +126,35 @@ struct SweepView: View {
             }
     }
 
+    private var plotPicker: some View {
+        Picker("Plot", selection: $plotKind) {
+            ForEach(PlotKind.allCases) { Text($0.label).tag($0) }
+        }
+        .pickerStyle(.segmented)
+    }
+
     private var toolbar: some View {
         VStack(spacing: 10) {
-            Picker("Plot", selection: $plotKind) {
-                ForEach(PlotKind.allCases) { Text($0.label).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .padding(.horizontal)
+            plotPicker.padding(.horizontal)
+            controls
+            counts
+        }
+        .padding(.top, 4)
+        .padding(.bottom, 10)
+    }
 
-            GlassGroup {
-                HStack(spacing: 18) {
+    /// A row along the bottom in portrait, a rail down the right in landscape.
+    ///
+    /// The rail keeps the whole plot height and, unlike a bar across the bottom, never sits on
+    /// top of the frequency labels.
+    private var controlLayout: AnyLayout {
+        isShort ? AnyLayout(VStackLayout(spacing: 16))
+                : AnyLayout(HStackLayout(spacing: 18))
+    }
+
+    private var controls: some View {
+        GlassGroup {
+                controlLayout {
                     button("gearshape", "Measure setup") { showMeasureSetup = true }
                     button("chart.xyaxis.line", "Plot setup") { showPlotSetup = true }
 
@@ -144,22 +184,21 @@ struct SweepView: View {
                     .disabled(state.captures.isEmpty)
                 }
                 .floatingBar()
-            }
-
-            HStack {
-                Text(state.captures.isEmpty
-                     ? "Ready" : "\(state.captures.count) measurement"
-                     + (state.captures.count == 1 ? "" : "s"))
-                Spacer()
-                Button("Reset") { state.resetCaptures() }
-                    .disabled(state.captures.isEmpty)
-            }
-            .font(.footnote)
-            .foregroundStyle(.secondary)
-            .padding(.horizontal)
         }
-        .padding(.top, 4)
-        .padding(.bottom, 10)
+    }
+
+    private var counts: some View {
+        HStack {
+            Text(state.captures.isEmpty
+                 ? "Ready" : "\(state.captures.count) measurement"
+                 + (state.captures.count == 1 ? "" : "s"))
+            Spacer()
+            Button("Reset") { state.resetCaptures() }
+                .disabled(state.captures.isEmpty)
+        }
+        .font(.footnote)
+        .foregroundStyle(.secondary)
+        .padding(.horizontal)
     }
 
     private func button(_ icon: String, _ label: String,

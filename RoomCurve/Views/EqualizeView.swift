@@ -13,6 +13,9 @@ struct EqualizeView: View {
     @State private var showSettings = false
     @State private var showFilters = false
     @State private var showExport = false
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+
+    private var isShort: Bool { verticalSizeClass == .compact }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -27,6 +30,16 @@ struct EqualizeView: View {
                     Menu("Choose measurement") { measurementMenu }
                 }
                 .frame(maxHeight: .infinity)
+            } else if isShort {
+                // Landscape gives the plot the whole screen; the readouts and controls float.
+                ResponsePlot(series: series, kind: .magnitude, grid: state.grid,
+                             lowFrequency: $low, highFrequency: $high)
+                .padding(.horizontal, 8)
+                .padding(.trailing, 92)
+                .overlay(alignment: .top) {
+                    summary.padding(.horizontal, 40)
+                }
+                .overlay(alignment: .trailing) { toolbar }
             } else {
                 ResponsePlot(series: series, kind: .magnitude, grid: state.grid,
                              lowFrequency: $low, highFrequency: $high)
@@ -96,9 +109,14 @@ struct EqualizeView: View {
         .frame(maxWidth: .infinity)
     }
 
+    private var controlLayout: AnyLayout {
+        isShort ? AnyLayout(VStackLayout(spacing: 16))
+                : AnyLayout(HStackLayout(spacing: 18))
+    }
+
     private var toolbar: some View {
         GlassGroup {
-            HStack(spacing: 18) {
+            controlLayout {
                 Button { showSettings = true } label: {
                     Image(systemName: "gearshape").font(.body).frame(width: 30, height: 30)
                 }

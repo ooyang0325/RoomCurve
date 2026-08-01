@@ -48,7 +48,6 @@ struct ResponsePlot: View {
     @State private var panAnchor: (low: Double, high: Double)?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private let limit = (low: 15.0, high: 24_000.0)
 
     var body: some View {
         Chart {
@@ -92,14 +91,17 @@ struct ResponsePlot: View {
                 AxisValueLabel()
             }
         }
-        .chartPlotStyle { $0.background(Color.primary.opacity(0.02)) }
+        // Without clipping, traces are drawn past the plot area and over the axis labels.
+        .chartPlotStyle { $0.background(Color.primary.opacity(0.02)).clipped() }
         .chartOverlay { proxy in
             GeometryReader { geometry in
                 Color.clear
                     .contentShape(Rectangle())
-                    .gesture(cursorOrPanGesture(proxy: proxy, geometry: geometry))
-                    .gesture(zoomGesture)
-                    .onTapGesture { toggleCursor(proxy: proxy, geometry: geometry) }
+                    .gesture(panGesture(proxy: proxy, geometry: geometry))
+                    .simultaneousGesture(zoomGesture)
+                    .onTapGesture { location in
+                        placeCursor(at: location, proxy: proxy, geometry: geometry)
+                    }
             }
         }
         .overlay(alignment: .topLeading) { cursorReadout }
@@ -179,53 +181,52 @@ struct ResponsePlot: View {
             : String(format: "%.0f Hz", frequency)
     }
 
-    private func toggleCursor(proxy: ChartProxy, geometry: GeometryProxy) {
+    /// Put the cursor where the finger landed, or take it away if it is already there.
+    ///
+    /// It used to appear in the middle of the plot and then have to be dragged into place,
+    /// which also meant one finger could not be used for panning while it was showing.
+    private func placeCursor(at location: CGPoint, proxy: ChartProxy,
+                             geometry: GeometryProxy) {
+        guard let plotFrame = proxy.plotFrame else { return }
+        let x = location.x - geometry[plotFrame].origin.x
+        guard let frequency: Double = proxy.value(atX: x) else { return }
+
         withAnimation(reduceMotion ? nil : .spring(duration: 0.25, bounce: 0)) {
-            cursorFrequency = cursorFrequency == nil ? sqrt(lowFrequency * highFrequency) : nil
+            if let current = cursorFrequency,
+               abs(log2(current / frequency)) < log2(highFrequency / lowFrequency) * 0.04 {
+                cursorFrequency = nil
+            } else {
+                cursorFrequency = frequency.clamped(to: lowFrequency...highFrequency)
+            }
         }
     }
 
     // MARK: - Gestures
 
-    /// One finger moves the cursor when it is showing, and pans the plot when it is not.
+    /// One finger pans, two fingers zoom, a tap places the cursor.
     ///
-    /// Feedback is continuous rather than applied on release: the cursor and the frequency
-    /// axis follow the finger the whole way, which is what makes the plot feel like a thing
-    /// being handled rather than a control being operated.
-    private func cursorOrPanGesture(proxy: ChartProxy, geometry: GeometryProxy) -> some Gesture {
-        DragGesture(minimumDistance: 0)
+    /// The pan needs a movement threshold so that a tap is not also a tiny drag; that is what
+    /// leaves taps free to reach `onTapGesture`.
+    private func panGesture(proxy: ChartProxy, geometry: GeometryProxy) -> some Gesture {
+        DragGesture(minimumDistance: 10)
             .onChanged { value in
-                guard let plotFrame = proxy.plotFrame else { return }
-                let origin = geometry[plotFrame].origin
-
-                // Ignore drags that begin at the very edge; that swipe belongs to navigation.
-                if panAnchor == nil && cursorFrequency == nil
-                    && value.startLocation.x - origin.x < backSwipeEdge {
-                    return
+                // A pinch reports as a drag too; let the zoom own the gesture while it lasts.
+                guard zoomAnchor == nil, let plotFrame = proxy.plotFrame else { return }
+                if panAnchor == nil {
+                    // Starting at the very edge belongs to the system's back swipe.
+                    guard value.startLocation.x - geometry[plotFrame].origin.x
+                            >= backSwipeEdge else { return }
+                    panAnchor = (lowFrequency, highFrequency)
                 }
-
-                if cursorFrequency != nil {
-                    let x = value.location.x - origin.x
-                    if let frequency: Double = proxy.value(atX: x) {
-                        cursorFrequency = frequency.clamped(to: lowFrequency...highFrequency)
-                    }
-                    return
-                }
-
-                if panAnchor == nil { panAnchor = (lowFrequency, highFrequency) }
                 guard let anchor = panAnchor else { return }
                 let width = geometry[plotFrame].width
                 guard width > 0 else { return }
-                // Pan by whole octaves so the movement matches the finger on a log axis.
+                // Move by octaves, so the content tracks the finger on a log axis.
                 let octaves = log2(anchor.high / anchor.low)
                 let shift = -Double(value.translation.width) / width * octaves
-                setDomain(low: anchor.low * exp2(shift), high: anchor.high * exp2(shift),
-                          resisting: true)
+                show(low: anchor.low * exp2(shift), high: anchor.high * exp2(shift))
             }
-            .onEnded { _ in
-                panAnchor = nil
-                settle()
-            }
+            .onEnded { _ in panAnchor = nil }
     }
 
     private var zoomGesture: some Gesture {
@@ -234,43 +235,41 @@ struct ResponsePlot: View {
                 if zoomAnchor == nil { zoomAnchor = (lowFrequency, highFrequency) }
                 guard let anchor = zoomAnchor else { return }
                 let centre = sqrt(anchor.low * anchor.high)
-                let octaves = log2(anchor.high / anchor.low) / max(value.magnification, 0.1)
-                setDomain(low: centre / exp2(octaves / 2), high: centre * exp2(octaves / 2),
-                          resisting: true)
+                let octaves = log2(anchor.high / anchor.low)
+                    / Swift.max(value.magnification, 0.05)
+                show(low: centre / exp2(octaves / 2), high: centre * exp2(octaves / 2))
             }
             .onEnded { _ in
                 zoomAnchor = nil
-                settle()
+                panAnchor = nil
             }
     }
 
-    /// Update the visible range, resisting rather than stopping dead at the ends.
+    /// Set the visible range, keeping it inside the audible band.
     ///
-    /// A hard stop reads as the plot having frozen. Progressive resistance reads as the plot
-    /// still responding while telling you there is nothing further out there.
-    private func setDomain(low: Double, high: Double, resisting: Bool) {
-        var newLow = low, newHigh = high
-        if resisting {
-            if newLow < limit.low { newLow = limit.low * pow(newLow / limit.low, 0.35) }
-            if newHigh > limit.high { newHigh = limit.high * pow(newHigh / limit.high, 0.35) }
-        }
-        guard newHigh / newLow > 1.05 else { return }
-        lowFrequency = newLow
-        highFrequency = newHigh
+    /// Both ends are handled together rather than clamped separately. Clamping them
+    /// independently is what let the plot get stranded off the end: pan far enough right and
+    /// the top edge pins to the limit while the bottom edge stays past it, and the minimum-span
+    /// rule then pushes the top back out again. Here the width is clamped first, then the whole
+    /// window slides back into range — so it can never leave, and its width never changes just
+    /// because it reached an edge.
+    private func show(low: Double, high: Double) {
+        guard low > 0, high > low else { return }
+        let lowest = log2(Self.audible.low), highest = log2(Self.audible.high)
+        let widest = highest - lowest
+
+        let span = log2(high / low).clamped(to: Self.narrowest...widest)
+        let half = span / 2
+        let centre = ((log2(low) + log2(high)) / 2)
+            .clamped(to: (lowest + half)...(highest - half))
+
+        lowFrequency = exp2(centre - half)
+        highFrequency = exp2(centre + half)
     }
 
-    /// Spring back inside the bounds once the finger lifts.
-    private func settle() {
-        var low = lowFrequency, high = highFrequency
-        low = Swift.max(low, limit.low)
-        high = Swift.min(high, limit.high)
-        if high / low < 1.2 { high = low * 1.2 }
-        guard low != lowFrequency || high != highFrequency else { return }
-        withAnimation(reduceMotion ? nil : .spring(duration: 0.4, bounce: 0.15)) {
-            lowFrequency = low
-            highFrequency = high
-        }
-    }
+    /// The whole audible range, and the furthest the plot will ever zoom in.
+    static let audible = (low: 15.0, high: 25_000.0)
+    static let narrowest = 0.35   // octaves
 }
 
 extension Comparable {

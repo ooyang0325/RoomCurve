@@ -16,23 +16,22 @@ struct RealTimeView: View {
     @State private var refresh: Task<Void, Never>?
     @State private var saveName = ""
     @State private var showSave = false
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+
+    private var isShort: Bool { verticalSizeClass == .compact }
 
     var body: some View {
-        VStack(spacing: 0) {
-            ResponsePlot(series: series, kind: .magnitude, grid: state.grid,
-                         lowFrequency: $low, highFrequency: $high)
-            .padding(.horizontal, 8)
-            .overlay(alignment: .top) {
-                if response == nil {
-                    ContentUnavailableView(
-                        "Not measuring",
-                        systemImage: "waveform",
-                        description: Text("Pink noise plays continuously so you can watch the "
-                                          + "response change as you adjust something."))
-                    .allowsHitTesting(false)
+        Group {
+            if isShort {
+                plot
+                    .padding(.trailing, 74)
+                    .overlay(alignment: .trailing) { controls.padding(.trailing, 6) }
+            } else {
+                VStack(spacing: 0) {
+                    plot
+                    toolbar
                 }
             }
-            toolbar
         }
         .navigationTitle("Real Time")
         .navigationBarTitleDisplayMode(.inline)
@@ -50,6 +49,22 @@ struct RealTimeView: View {
             Text("Saves the current response so it can be equalised or compared later.")
         }
         .onDisappear { stop() }
+    }
+
+    private var plot: some View {
+        ResponsePlot(series: series, kind: .magnitude, grid: state.grid,
+                     lowFrequency: $low, highFrequency: $high)
+        .padding(.horizontal, 8)
+        .overlay(alignment: .top) {
+            if response == nil {
+                ContentUnavailableView(
+                    "Not measuring",
+                    systemImage: "waveform",
+                    description: Text("Pink noise plays continuously so you can watch the "
+                                      + "response change as you adjust something."))
+                .allowsHitTesting(false)
+            }
+        }
     }
 
     private var toolbar: some View {
@@ -70,8 +85,19 @@ struct RealTimeView: View {
             .multilineTextAlignment(.center)
             .padding(.horizontal)
 
-            GlassGroup {
-                HStack(spacing: 18) {
+            controls
+        }
+        .padding(.top, 4)
+    }
+
+    private var controlLayout: AnyLayout {
+        isShort ? AnyLayout(VStackLayout(spacing: 16))
+                : AnyLayout(HStackLayout(spacing: 18))
+    }
+
+    private var controls: some View {
+        GlassGroup {
+                controlLayout {
                     Button { showPlotSetup = true } label: {
                         Image(systemName: "chart.xyaxis.line")
                             .font(.body).frame(width: 30, height: 30)
@@ -111,10 +137,8 @@ struct RealTimeView: View {
                     .disabled(response == nil)
                 }
                 .floatingBar()
-            }
-            .padding(.bottom, 6)
         }
-        .padding(.top, 4)
+        .padding(.bottom, 6)
     }
 
     private var series: [PlotSeries] {
