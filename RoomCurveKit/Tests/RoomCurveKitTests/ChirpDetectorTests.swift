@@ -14,7 +14,7 @@ struct ChirpDetectorTests {
     /// Room tone for `seconds`, then whatever `content` is, then more room tone.
     func recording(silence seconds: Double, then content: [Float],
                    noise: Float = 0.002, tail: Double = 3.0) -> (samples: [Float], at: Int) {
-        var rng = SystemRandomNumberGenerator()
+        var rng = SeededRandom()
         let quiet = Int(seconds * sampleRate)
         var out = [Float](repeating: 0, count: quiet + content.count + Int(tail * sampleRate))
         for i in out.indices { out[i] = Float.random(in: -noise...noise, using: &rng) }
@@ -42,7 +42,7 @@ struct ChirpDetectorTests {
     func ignoresNoiseBurst() {
         // Somebody talking, a chair scraping, traffic. Far louder than the room, and under the
         // old energy test this started a capture.
-        var rng = SystemRandomNumberGenerator()
+        var rng = SeededRandom()
         let burst = (0..<Int(0.4 * sampleRate)).map { _ in
             Float.random(in: -0.5...0.5, using: &rng)
         }
@@ -73,7 +73,7 @@ struct ChirpDetectorTests {
     @Test("ignores music-like content")
     func ignoresMusic() {
         // A handful of harmonically related tones with an envelope.
-        var rng = SystemRandomNumberGenerator()
+        var rng = SeededRandom()
         let n = Int(2.0 * sampleRate)
         let music = (0..<n).map { i -> Float in
             let t = Double(i) / 48_000
@@ -115,7 +115,7 @@ struct ChirpDetectorTests {
         // sits in an otherwise silent stretch — and judging a peak against the average level
         // of its surroundings made it look enormous. The chirp that arrived seconds later was
         // never reached.
-        var rng = SystemRandomNumberGenerator()
+        var rng = SeededRandom()
         var samples = (0..<Int(12 * sampleRate)).map { _ in
             Float.random(in: -0.002...0.002, using: &rng)
         }
@@ -135,7 +135,7 @@ struct ChirpDetectorTests {
 
     @Test("a burst of clicks alone never triggers")
     func clickStormAlone() {
-        var rng = SystemRandomNumberGenerator()
+        var rng = SeededRandom()
         var samples = (0..<Int(10 * sampleRate)).map { _ in
             Float.random(in: -0.002...0.002, using: &rng)
         }
@@ -154,7 +154,7 @@ struct ChirpDetectorTests {
         let config = SweepConfig(duration: 1.0, sampleRate: 48_000, preRoll: 0.5,
                                  gap: 0.2, tail: 0.3)
         let stimulus = SweepGenerator.make(config)
-        var rng = SystemRandomNumberGenerator()
+        var rng = SeededRandom()
         var samples = (0..<Int(12 * sampleRate)).map { _ in
             Float.random(in: -0.002...0.002, using: &rng)
         }
@@ -168,7 +168,7 @@ struct ChirpDetectorTests {
 
     @Test("sharpness separates a chirp from an impulse by a wide margin")
     func sharpnessDiscriminates() {
-        var rng = SystemRandomNumberGenerator()
+        var rng = SeededRandom()
         func score(_ content: [Float]) -> Float {
             var samples = (0..<Int(3 * sampleRate)).map { _ in
                 Float.random(in: -0.002...0.002, using: &rng)
@@ -204,7 +204,7 @@ struct ChirpDetectorTests {
 
     @Test("finds the chirp with noise going on around it")
     func chirpInNoise() throws {
-        var rng = SystemRandomNumberGenerator()
+        var rng = SeededRandom()
         var (samples, at) = recording(silence: 2.0, then: chirp.map { $0 * 0.3 }, noise: 0.02)
         // Somebody talking over the top of it.
         for i in samples.indices where i > Int(1.5 * sampleRate) && i < Int(3.5 * sampleRate) {
