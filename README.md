@@ -1,6 +1,4 @@
-<img src="Docs/icon.png" alt="RoomCurve" width="128" align="left" hspace="16" vspace="4">
-
-# RoomCurve
+# <img src="Docs/icon.png" alt="" width="72" align="middle" hspace="6"> RoomCurve
 
 An open-source iOS app for tuning audio systems: measure your room with your phone, see how it
 sounds against a target curve, and generate room-correction filters for whatever DSP you own.
