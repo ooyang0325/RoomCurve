@@ -153,8 +153,8 @@ struct PlotSetupView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Target curve") {
-                    Picker("Curve", selection: $state.selectedTargetName) {
+                Section("Reference target curve") {
+                    Picker("Curve", selection: $state.referenceTargetName) {
                         ForEach(store.targetCurves) { Text($0.name).tag($0.name) }
                     }
                     Picker("Fit", selection: Binding(
@@ -177,6 +177,10 @@ struct PlotSetupView: View {
                              + "which matters when comparing one adjustment against the next.")
                         .font(.caption).foregroundStyle(.secondary)
                     }
+
+                    Text("Drawn on the plot to measure against. Correction uses the curve "
+                         + "chosen on the Equalize screen, not this one.")
+                    .font(.caption).foregroundStyle(.secondary)
                 }
 
                 Section("Display") {

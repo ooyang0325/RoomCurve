@@ -112,7 +112,9 @@ struct CurveEditorView: View {
             Text("\(curve?.name ?? "") will be removed. Curves that ship with the app cannot "
                  + "be deleted.")
         }
-        .onAppear { if curve == nil { select(state.targetCurve(from: store)) } }
+        .onAppear {
+            if curve == nil { select(state.targetCurve(named: state.eqTargetName, from: store)) }
+        }
     }
 
     // MARK: - Editor
@@ -392,7 +394,8 @@ struct CurveEditorView: View {
         state.show("Deleted \(curve.name)")
         let fallback = store.targetCurves.first { !$0.isBuiltIn && $0.name != curve.name }
             ?? TargetCurve.bundled[0]
-        state.selectedTargetName = fallback.name
+        if state.referenceTargetName == curve.name { state.referenceTargetName = fallback.name }
+        if state.eqTargetName == curve.name { state.eqTargetName = fallback.name }
         select(fallback)
     }
 
@@ -409,7 +412,8 @@ struct CurveEditorView: View {
         }
         do {
             try store.save(curve)
-            state.selectedTargetName = curve.name
+            state.referenceTargetName = curve.name
+            state.eqTargetName = curve.name
             self.curve = curve
             original = curve
             state.show("Saved \(curve.name)")

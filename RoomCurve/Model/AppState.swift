@@ -59,7 +59,8 @@ final class AppState: ObservableObject {
     @Published var realTimeMode: RealTimeAnalyser.Mode = .live
     @Published var snrThreshold: Double = 10
     @Published var blankingEnabled = true
-    @Published var selectedTargetName = "Classic tilt (−1 dB/oct)"
+    /// Drawn on the measurement screens for reference. Does not affect correction.
+    @Published var referenceTargetName = "Classic tilt (−1 dB/oct)"
     @Published var curveFit: CurveFit = .automatic
     @Published var comparisonMeasurement: SavedMeasurement?
 
@@ -69,6 +70,8 @@ final class AppState: ObservableObject {
 
     // Equalisation
     @Published var eqSettings = EQSettings()
+    /// The curve correction is actually calculated against, chosen on the Equalize screen.
+    @Published var eqTargetName = "Classic tilt (−1 dB/oct)"
 
     // Captured this session
     @Published var captures: [FrequencyResponse] = []
@@ -90,9 +93,8 @@ final class AppState: ObservableObject {
         return combined?.smoothed(smoothing)
     }
 
-    func targetCurve(from store: Store) -> TargetCurve {
-        store.targetCurves.first { $0.name == selectedTargetName }
-            ?? TargetCurve.bundled[0]
+    func targetCurve(named name: String, from store: Store) -> TargetCurve {
+        store.targetCurves.first { $0.name == name } ?? TargetCurve.bundled[0]
     }
 
     func calibration(from store: Store) -> MicrophoneCalibration? {
@@ -100,9 +102,9 @@ final class AppState: ObservableObject {
         return store.calibrations.first { $0.name == calibrationName }
     }
 
-    /// Target curve sampled and positioned against the current measurement.
+    /// Reference target curve sampled and positioned against the current measurement.
     func fittedTarget(from store: Store) -> [Double] {
-        let target = targetCurve(from: store).sampled(on: grid)
+        let target = targetCurve(named: referenceTargetName, from: store).sampled(on: grid)
         guard let response = currentResponse else {
             if case .manual(let level) = curveFit { return target.map { $0 + level } }
             return target
