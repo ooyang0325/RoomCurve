@@ -36,6 +36,10 @@ struct ExportFormat: Identifiable, Hashable {
               detail: "32-bit float WAV for a convolution engine — Roon, CamillaDSP, "
                     + "JamesDSP, mpv's afir.",
               fileExtension: "wav", needsSampleRate: true, isText: false),
+        .init(id: "graphic", name: "Graphic EQ (fitted)",
+              detail: "Describe any fixed-band equaliser — its frequencies, step size and "
+                    + "range — and RoomCurve works out the settings that come closest.",
+              fileExtension: "txt", needsSampleRate: false, isText: true),
         .init(id: "card", name: "Manual entry card",
               detail: "Values to type in by hand, for equalisers with no import at all.",
               fileExtension: "txt", needsSampleRate: false, isText: true)
@@ -52,6 +56,13 @@ struct ExportView: View {
     @State private var manualTarget = ManualEQTarget.parametricManual
     @State private var sharing: ShareItem?
     @State private var copied = false
+
+    @State private var preset = GraphicEQ.tenBand
+    @State private var custom = false
+    @State private var frequencyText = ""
+    @State private var minGain = -12.0
+    @State private var maxGain = 12.0
+    @State private var step = 1.0
 
     var body: some View {
         NavigationStack {
@@ -77,6 +88,10 @@ struct ExportView: View {
                              + "your device runs at.")
                         .font(.caption).foregroundStyle(.secondary)
                     }
+                }
+
+                if format.id == "graphic" {
+                    graphicEQSections
                 }
 
                 if format.id == "card" {
@@ -131,6 +146,96 @@ struct ExportView: View {
         }
     }
 
+    // MARK: - Graphic EQ
+
+    /// The equaliser being fitted: a preset, or whatever the user typed in.
+    private var graphicEQ: GraphicEQ {
+        guard custom else { return preset }
+        let frequencies = frequencyText
+            .split(whereSeparator: { ", \t\n".contains($0) })
+            .compactMap { Double($0) }
+            .filter { $0 >= 10 && $0 <= 24_000 }
+        return GraphicEQ(name: "Custom (\(frequencies.count) bands)",
+                         frequencies: frequencies.isEmpty ? preset.frequencies : frequencies,
+                         minGainDB: minGain, maxGainDB: maxGain, stepDB: step)
+    }
+
+    private var fit: GraphicEQFit {
+        GraphicEQFitter.fit(targetDB: filterSet.active.combinedResponseDB(), to: graphicEQ)
+    }
+
+    @ViewBuilder
+    private var graphicEQSections: some View {
+        Section("Equaliser") {
+            Picker("Preset", selection: $preset) {
+                ForEach(GraphicEQ.presets) { Text($0.name).tag($0) }
+            }
+            .disabled(custom)
+            Toggle("Describe my own", isOn: $custom)
+        }
+
+        if custom {
+            Section {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Band frequencies, in Hz")
+                        .font(.caption).foregroundStyle(.secondary)
+                    TextField("60, 230, 910, 3600, 14000", text: $frequencyText, axis: .vertical)
+                        .keyboardType(.numbersAndPunctuation)
+                        .font(.body.monospaced())
+                        .lineLimit(2...5)
+                }
+                Stepper(String(format: "Lowest: %.0f dB", minGain),
+                        value: $minGain, in: -40...(-1), step: 1)
+                Stepper(String(format: "Highest: %+.0f dB", maxGain),
+                        value: $maxGain, in: 1...40, step: 1)
+                Picker("Step", selection: $step) {
+                    Text("0.5 dB").tag(0.5)
+                    Text("1 dB").tag(1.0)
+                    Text("2 dB").tag(2.0)
+                    Text("3 dB").tag(3.0)
+                }
+            } header: {
+                Text("Your equaliser")
+            } footer: {
+                Text("Separate the frequencies with commas. Any number of bands works — five "
+                     + "on a portable player, thirty-one on a rack unit.")
+            }
+        }
+
+        Section {
+            let result = fit
+            ForEach(Array(result.eq.frequencies.enumerated()), id: \.offset) { index, frequency in
+                HStack {
+                    Text(frequency >= 1_000
+                         ? String(format: "%.4g kHz", frequency / 1_000)
+                         : String(format: "%.4g Hz", frequency))
+                    Spacer()
+                    Text(String(format: "%+.1f dB",
+                                index < result.gains.count ? result.gains[index] : 0))
+                        .monospacedDigit()
+                        .foregroundStyle(index < result.gains.count
+                                         && abs(result.gains[index]) > 0.01 ? .primary : .secondary)
+                }
+                .font(.subheadline)
+            }
+        } header: {
+            Text("Settings")
+        } footer: {
+            let result = fit
+            VStack(alignment: .leading, spacing: 4) {
+                Text(String(format: "Within %.1f dB on average, %.1f dB at worst.",
+                            result.rmsErrorDB, result.maxErrorDB))
+                if result.clipped {
+                    Text("A band has reached the end of its range, so this equaliser cannot "
+                         + "fully reach the correction.")
+                    .foregroundStyle(.orange)
+                }
+                Text("Bands overlap, so these are solved together rather than read off the "
+                     + "correction one frequency at a time.")
+            }
+        }
+    }
+
     private var text: String {
         switch format.id {
         case "json":
@@ -141,6 +246,8 @@ struct ExportView: View {
         case "camilla": filterSet.toCamillaDSPYAML()
         case "mpv": filterSet.toMPVConf()
         case "card": filterSet.toManualCard(manualTarget)
+        case "graphic":
+            fit.card(title: filterSet.title) + "\n" + fit.graphicEQLine() + "\n"
         default: ""
         }
     }
