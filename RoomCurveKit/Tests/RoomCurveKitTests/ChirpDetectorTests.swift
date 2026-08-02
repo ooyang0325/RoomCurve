@@ -109,6 +109,89 @@ struct ChirpDetectorTests {
         #expect(detector().scan(silent) == nil)
     }
 
+    @Test("a quiet click early on does not pre-empt a chirp arriving later")
+    func quietClickBeforeChirp() throws {
+        // The failure a real recording exposed. The click is small in absolute terms, but it
+        // sits in an otherwise silent stretch — and judging a peak against the average level
+        // of its surroundings made it look enormous. The chirp that arrived seconds later was
+        // never reached.
+        var rng = SystemRandomNumberGenerator()
+        var samples = (0..<Int(12 * sampleRate)).map { _ in
+            Float.random(in: -0.002...0.002, using: &rng)
+        }
+        // Trackpad and keyboard clicks, scattered through the wait.
+        for at in [0.2, 1.4, 2.9, 3.5] {
+            let i = Int(at * sampleRate)
+            samples[i] += 0.25
+            samples[i + 1] -= 0.18
+            samples[i + 2] += 0.06
+        }
+        let chirpAt = Int(5.0 * sampleRate)
+        for (i, value) in chirp.enumerated() { samples[chirpAt + i] += value * 0.3 }
+
+        let found = try #require(detector().scan(samples))
+        #expect(abs(found - chirpAt) < Int(0.02 * sampleRate))
+    }
+
+    @Test("a burst of clicks alone never triggers")
+    func clickStormAlone() {
+        var rng = SystemRandomNumberGenerator()
+        var samples = (0..<Int(10 * sampleRate)).map { _ in
+            Float.random(in: -0.002...0.002, using: &rng)
+        }
+        for at in stride(from: 0.3, to: 9.0, by: 0.37) {
+            let i = Int(at * sampleRate)
+            samples[i] += Float.random(in: 0.1...0.6, using: &rng)
+            samples[i + 1] -= Float.random(in: 0.05...0.4, using: &rng)
+        }
+        #expect(detector().scan(samples) == nil)
+    }
+
+    @Test("takes the first chirp, not the closing one")
+    func firstOfTwoChirps() throws {
+        // The stimulus ends with a second identical chirp. Locking onto that one puts the
+        // whole measurement in the wrong place.
+        let config = SweepConfig(duration: 1.0, sampleRate: 48_000, preRoll: 0.5,
+                                 gap: 0.2, tail: 0.3)
+        let stimulus = SweepGenerator.make(config)
+        var rng = SystemRandomNumberGenerator()
+        var samples = (0..<Int(12 * sampleRate)).map { _ in
+            Float.random(in: -0.002...0.002, using: &rng)
+        }
+        let at = Int(3.0 * sampleRate)
+        for (i, value) in stimulus.samples.enumerated() { samples[at + i] += value * 0.3 }
+
+        let found = try #require(
+            ChirpDetector(reference: stimulus.chirp, sampleRate: sampleRate).scan(samples))
+        #expect(abs(found - (at + stimulus.chirpStart)) < Int(0.02 * sampleRate))
+    }
+
+    @Test("sharpness separates a chirp from an impulse by a wide margin")
+    func sharpnessDiscriminates() {
+        var rng = SystemRandomNumberGenerator()
+        func score(_ content: [Float]) -> Float {
+            var samples = (0..<Int(3 * sampleRate)).map { _ in
+                Float.random(in: -0.002...0.002, using: &rng)
+            }
+            let at = Int(1.0 * sampleRate)
+            for (i, value) in content.enumerated() where at + i < samples.count {
+                samples[at + i] += value
+            }
+            // The sharpest thing in the clip, not the first — with no threshold, "first"
+            // would just be whatever noise sat in the opening window.
+            return ChirpMatch.arrival(of: chirp, in: samples, sampleRate: sampleRate,
+                                      threshold: 0, earliest: false)?.sharpness ?? 0
+        }
+
+        var click = [Float](repeating: 0, count: 64)
+        click[0] = 0.6
+        click[1] = -0.4
+
+        // A chirp compresses into a spike; an impulse smears back out into a chirp shape.
+        #expect(score(chirp.map { $0 * 0.3 }) > 20)
+        #expect(score(click) < 6)
+    }
+
     // MARK: - Robustness
 
     @Test("finds a chirp that is quiet but audible")

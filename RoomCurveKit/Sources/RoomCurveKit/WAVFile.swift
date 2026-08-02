@@ -31,7 +31,7 @@ public enum WAVFile {
             switch self {
             case .notRIFF: "Not a WAV file."
             case .unsupportedFormat(let code):
-                "Unsupported WAV encoding (format \(code)); 32-bit float or 16-bit PCM expected."
+                "Unsupported WAV encoding (format \(code)). Expected PCM or 32-bit float."
             case .missingChunk(let name): "WAV file has no \(name) chunk."
             }
         }
@@ -118,6 +118,20 @@ public enum WAVFile {
             return (0..<count).map {
                 Float(bitPattern: readUInt32(bytes, offset + $0 * 4))
             }
+        case (1, 24):
+            // Recordings from other tools are frequently 24-bit; three bytes little-endian,
+            // sign extended from the top byte.
+            let count = byteCount / 3
+            return (0..<count).map { i in
+                let at = offset + i * 3
+                guard at + 2 < bytes.count else { return 0 }
+                let raw = Int32(bytes[at]) | (Int32(bytes[at + 1]) << 8)
+                    | (Int32(bytes[at + 2]) << 16)
+                let signed = raw & 0x80_0000 != 0 ? raw | ~0xFF_FFFF : raw
+                return Float(signed) / 8_388_608
+            }
+        case (1, 8):
+            return (0..<byteCount).map { Float(Int(bytes[offset + $0]) - 128) / 128 }
         case (1, 16):
             let count = byteCount / 2
             return (0..<count).map {

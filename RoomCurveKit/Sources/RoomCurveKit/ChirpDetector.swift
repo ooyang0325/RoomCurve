@@ -1,36 +1,98 @@
 import Foundation
 import Accelerate
 
+/// Matched filtering for the timing chirp.
+///
+/// The measure that matters is **sharpness**: how far the correlation peak stands above the
+/// background immediately around it. Correlating a chirp with itself compresses 200 ms of sweep
+/// into a spike a fraction of a millisecond wide, so the peak towers over its neighbourhood.
+/// Everything else fails that test for a reason rooted in what it is:
+///
+/// - a trackpad or keyboard click is an impulse, so matched filtering smears it back out into
+///   the shape of the chirp — 200 ms wide, with no spike;
+/// - noise correlates weakly and evenly;
+/// - the sweep crosses the same frequencies far more slowly, so it never compresses.
+///
+/// Sharpness is also scale free, which is what the previous version got wrong. Judging the peak
+/// against the average level of the surrounding recording makes any small transient in a quiet
+/// stretch look enormous — a click during a silent moment scored higher than a real chirp
+/// played across a room.
+enum ChirpMatch {
+
+    /// Peak height against the background either side of it.
+    ///
+    /// - Parameter guardBand: skipped either side of the peak, so it does not measure itself.
+    static func sharpness(of correlation: [Float], at index: Int,
+                          span: Int, guardBand: Int) -> Float {
+        let low = Swift.max(0, index - span)
+        let high = Swift.min(correlation.count, index + span)
+        guard high > low else { return 0 }
+
+        var sum: Float = 0
+        var count = 0
+        for k in low..<high where abs(k - index) > guardBand {
+            sum += correlation[k] * correlation[k]
+            count += 1
+        }
+        guard count > 0 else { return 0 }
+        let background = (sum / Float(count)).squareRoot()
+        guard background > 0 else { return 0 }
+        return abs(correlation[index]) / background
+    }
+
+    /// Find where a chirp arrives in `signal`, if it does at all.
+    ///
+    /// - Parameter earliest: take the first arrival that passes rather than the sharpest. The
+    ///   stimulus deliberately ends with a second, identical chirp, and a strong early
+    ///   reflection can outrank the direct sound; the first qualifying peak is the one that
+    ///   defines t=0.
+    static func arrival(of reference: [Float], in signal: [Float],
+                        sampleRate: Double, threshold: Float,
+                        earliest: Bool = true) -> (index: Int, sharpness: Float)? {
+        guard signal.count > reference.count else { return nil }
+        let correlation = Deconvolver.linearConvolve(signal, [Float](reference.reversed()))
+        let guardBand = Swift.max(1, Int(0.002 * sampleRate))
+        let span = reference.count
+
+        // Scan in windows, so a later and louder chirp cannot hide an earlier one.
+        var best: (index: Int, sharpness: Float)?
+        var position = 0
+        while position < correlation.count {
+            let end = Swift.min(position + span, correlation.count)
+            var peak = position
+            for k in position..<end where abs(correlation[k]) > abs(correlation[peak]) {
+                peak = k
+            }
+            position = end
+
+            let score = sharpness(of: correlation, at: peak, span: span, guardBand: guardBand)
+            guard score > threshold else { continue }
+
+            let arrival = peak - (reference.count - 1)
+            guard arrival >= 0 else { continue }
+            if earliest { return (arrival, score) }
+            if best == nil || score > best!.sharpness { best = (arrival, score) }
+        }
+        return best
+    }
+}
+
 /// Watches a growing recording for the timing chirp.
 ///
-/// The first version of this looked for the room getting louder. That is cheap but it is not
-/// specific to anything: a door, a cough, or somebody starting the wrong track all cross the
-/// threshold, and the capture then starts at the wrong moment and fails several seconds later
-/// with a confusing message.
-///
-/// This matches the chirp itself. Correlating against the known sweep is selective in a way an
-/// energy threshold cannot be — the chirp's autocorrelation is a sharp spike, while broadband
-/// noise or an impulse smears across the whole 200 ms and never reaches the same peak relative
-/// to its own background. The cost is kept bounded by scanning only newly arrived audio in
-/// blocks, rather than re-correlating a buffer that grows for as long as somebody takes to
-/// walk to their laptop.
+/// Listens for as long as it takes — somebody has to reach whatever is playing the file and
+/// press play — while keeping the work bounded by only examining audio it has not seen yet.
 public final class ChirpDetector {
     private let reference: [Float]
-    private let reversed: [Float]
     private let sampleRate: Double
     private let blockSize: Int
     private let overlap: Int
     private let threshold: Float
-
-    /// Absolute sample index already examined.
     private var scanned = 0
 
-    /// - Parameter threshold: how far the correlation peak must stand above the background of
-    ///   the block it was found in. Chirp autocorrelation clears this comfortably; noise of the
-    ///   same loudness does not come close.
+    /// - Parameter threshold: minimum sharpness. Real chirps measure in the tens even across a
+    ///   room; clicks, noise and the sweep itself sit around two or three.
     public init(reference: [Float], sampleRate: Double, threshold: Float = 12) {
         self.reference = reference
-        self.reversed = [Float](reference.reversed())
         self.sampleRate = sampleRate
         self.threshold = threshold
         self.blockSize = Swift.max(reference.count * 4, Int(sampleRate))
@@ -38,46 +100,31 @@ public final class ChirpDetector {
     }
 
     /// Feed everything captured so far. Returns the chirp's absolute sample index once found.
-    ///
-    /// Safe to call repeatedly; each call only looks at audio it has not seen, plus enough of
-    /// an overlap that a chirp straddling a block boundary is still caught whole.
     public func scan(_ recording: [Float]) -> Int? {
         while recording.count - scanned >= blockSize {
             let start = Swift.max(0, scanned - overlap)
             let end = Swift.min(recording.count, start + blockSize + overlap)
-            let block = Array(recording[start..<end])
 
-            if let offset = locate(in: block) {
-                return start + offset
+            if let found = ChirpMatch.arrival(of: reference, in: Array(recording[start..<end]),
+                                              sampleRate: sampleRate, threshold: threshold) {
+                return start + found.index
             }
             scanned += blockSize
         }
         return nil
     }
 
-    /// Start over, for a fresh measurement.
     public func reset() { scanned = 0 }
-
-    /// Matched-filter one block.
-    private func locate(in block: [Float]) -> Int? {
-        guard block.count > reference.count else { return nil }
-        let correlation = Deconvolver.linearConvolve(block, reversed)
-        guard let peak = Deconvolver.peakIndex(of: correlation) else { return nil }
-
-        let rms = sqrt(vDSP.meanSquare(correlation))
-        guard rms > 0 else { return nil }
-        guard abs(correlation[peak]) / rms > threshold else { return nil }
-
-        let arrival = peak - (reference.count - 1)
-        return arrival >= 0 && arrival < block.count ? arrival : nil
-    }
 }
 
 public extension SweepStimulus {
-    /// Samples that must still arrive after the chirp is heard, before the recording holds a
-    /// complete measurement — the rest of the signal, plus a margin of quiet afterwards that
-    /// doubles as the noise reference.
+    /// Samples that must still arrive after the chirp is heard before the recording holds a
+    /// complete measurement.
+    ///
+    /// Deliberately generous. Capture is cheap, and leaving the analysis room either side of
+    /// what it strictly needs means a slightly early or late detection still has a complete
+    /// measurement inside the buffer, rather than one clipped at the end.
     var samplesNeededAfterOnset: Int {
-        samples.count - chirpStart + Int(1.5 * config.sampleRate)
+        samples.count - chirpStart + Int(2.5 * config.sampleRate)
     }
 }
