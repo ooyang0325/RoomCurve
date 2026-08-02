@@ -21,7 +21,7 @@ private func simulateRecording(_ stimulus: SweepStimulus,
     recording.append(contentsOf: played)
     recording.append(contentsOf: [Float](repeating: 0, count: 4800))
     if noise > 0 {
-        var rng = SystemRandomNumberGenerator()
+        var rng = SeededRandom()
         for i in recording.indices {
             recording[i] += Float.random(in: -noise...noise, using: &rng)
         }
@@ -151,7 +151,7 @@ struct DeconvolutionTests {
     @Test("rejects a recording with no test signal in it")
     func noSignal() {
         let stimulus = SweepGenerator.make(testConfig)
-        var rng = SystemRandomNumberGenerator()
+        var rng = SeededRandom()
         let noise = (0..<300_000).map { _ in Float.random(in: -0.01...0.01, using: &rng) }
         #expect(throws: MeasurementError.testSignalNotDetected) {
             try Deconvolver.analyse(recording: noise, stimulus: stimulus)
