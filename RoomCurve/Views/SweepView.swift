@@ -315,24 +315,25 @@ struct SweepView: View {
 
     /// Wait for somebody to press play, then capture the rest of the signal.
     ///
-    /// Rather than record for a fixed window and hope it overlaps with whatever the other
-    /// device is doing, this listens indefinitely and watches for the moment the room stops
-    /// being quiet. Once the signal starts it keeps recording exactly long enough to hold a
-    /// complete measurement, then stops on its own.
+    /// Listens indefinitely rather than recording for a fixed window, and looks for the timing
+    /// chirp specifically. Watching for the room simply getting louder was too easy to set off
+    /// — a door or a voice would start a capture, which then failed several seconds later for
+    /// reasons that had nothing to do with what the user did.
     private func listenForExternalSignal(stimulus: SweepStimulus) async throws -> [Float] {
         try audio.startListening()
         defer { audio.stop() }
 
-        let sampleRate = audio.sampleRate
+        let detector = ChirpDetector(reference: stimulus.chirp,
+                                     sampleRate: audio.sampleRate)
         let needed = stimulus.samplesNeededAfterOnset
         var onset: Int?
 
         while !Task.isCancelled {
-            try await Task.sleep(for: .milliseconds(200))
+            try await Task.sleep(for: .milliseconds(250))
             let captured = audio.capturedSamples()
 
             if onset == nil {
-                onset = SignalOnset.find(in: captured, sampleRate: sampleRate)
+                onset = detector.scan(captured)
                 if onset != nil { state.show("Test signal detected — capturing") }
                 continue
             }
