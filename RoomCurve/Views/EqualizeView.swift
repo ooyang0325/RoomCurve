@@ -73,7 +73,7 @@ struct EqualizeView: View {
                     filters: correction.filters,
                     provenance: Provenance(
                         microphone: state.applyCalibration ? state.calibrationName : "Uncalibrated",
-                        targetCurve: state.selectedTargetName)))
+                        targetCurve: state.eqTargetName)))
             }
         }
         .onAppear { if source == nil { source = store.measurements.first; load() } }
@@ -183,19 +183,17 @@ struct EqualizeView: View {
         return result
     }
 
+    /// The Equalize target, level-matched to the measurement. Always fitted automatically:
+    /// a fixed level would only add a broadband boost, which is the preamp's job.
     private var fittedTarget: [Double] {
         guard let measured else { return [] }
-        let target = state.targetCurve(from: store).sampled(on: state.grid)
-        switch state.curveFit {
-        case .manual(let level):
-            return target.map { $0 + level }
-        case .automatic:
-            let offset = TargetCurve.fitOffset(
-                target: target, measured: measured.magnitudeDB,
-                blanked: state.blanked(for: measured),
-                range: state.grid.indices(from: 20, to: 20_000))
-            return target.map { $0 + offset }
-        }
+        let target = state.targetCurve(named: state.eqTargetName, from: store)
+            .sampled(on: state.grid)
+        let offset = TargetCurve.fitOffset(
+            target: target, measured: measured.magnitudeDB,
+            blanked: state.blanked(for: measured),
+            range: state.grid.indices(from: 20, to: 20_000))
+        return target.map { $0 + offset }
     }
 
     private func load() {
@@ -220,11 +218,22 @@ struct EqualizeView: View {
 
 struct EqualizeSetupView: View {
     @EnvironmentObject private var state: AppState
+    @EnvironmentObject private var store: Store
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
             Form {
+                Section("Target curve") {
+                    Picker("Curve", selection: $state.eqTargetName) {
+                        ForEach(store.targetCurves) { Text($0.name).tag($0.name) }
+                    }
+                    Text("Correction is calculated against this curve. The target drawn on "
+                         + "the measurement screens is only a reference and has no effect "
+                         + "here.")
+                    .font(.caption).foregroundStyle(.secondary)
+                }
+
                 Section("Filter type") {
                     Picker("Type", selection: $state.eqSettings.kind) {
                         ForEach(CorrectionKind.allCases, id: \.self) { Text($0.label).tag($0) }

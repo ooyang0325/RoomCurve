@@ -48,6 +48,12 @@ public struct Biquad: Sendable, Codable, Equatable, Identifiable, Hashable {
     public var enabled: Bool
     public var channel: FilterChannel
 
+    enum CodingKeys: String, CodingKey {
+        case id, type, q, enabled, channel
+        case frequency = "fc_hz"
+        case gainDB = "gain_db"
+    }
+
     public init(id: UUID = UUID(), type: FilterType = .peaking, frequency: Double,
                 gainDB: Double, q: Double, enabled: Bool = true,
                 channel: FilterChannel = .both) {

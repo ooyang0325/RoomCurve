@@ -35,12 +35,39 @@ enum DemoLaunch {
                         case "equalize": EqualizeView()
                         case "curve": CurveEditorView()
                         case "measurements": MeasurementsView()
+
                         default: EmptyView()
                         }
                     }
             }
-            .onAppear { if path.isEmpty { path = [screen] } }
+            // ExportView carries its own navigation stack because it is designed as a sheet;
+            // pushing it into another stack is not a valid composition.
+            .sheet(isPresented: .constant(screen == "export")) { DemoExport() }
+            .onAppear { if path.isEmpty && screen != "export" { path = [screen] } }
         }
+    }
+
+    /// The export sheet on its own, with a correction to work from, so its screens can be
+    /// inspected without tapping through the app.
+    struct DemoExport: View {
+        @EnvironmentObject private var state: AppState
+
+        var body: some View {
+            let room = [
+                Biquad(type: .peaking, frequency: 55, gainDB: -7, q: 3),
+                Biquad(type: .peaking, frequency: 140, gainDB: 5, q: 2.5),
+                Biquad(type: .peaking, frequency: 480, gainDB: -4, q: 2),
+                Biquad(type: .highShelf, frequency: 6_000, gainDB: 3, q: 0.707)
+            ]
+            ExportView(filterSet: FilterSet(title: "Demo Room", preampDB: -5, filters: room),
+                       initialFormat: "graphic")
+        }
+    }
+
+    /// Save one measurement too, so the Equalize tool has something to work from.
+    static func seedStore(_ store: Store, state: AppState) {
+        guard store.measurements.isEmpty, let first = state.captures.first else { return }
+        try? store.save(first.asImpulseResponse(), name: "Demo Room")
     }
 
     /// A synthetic room: a couple of modal peaks, a suckout, and a low-frequency rolloff.

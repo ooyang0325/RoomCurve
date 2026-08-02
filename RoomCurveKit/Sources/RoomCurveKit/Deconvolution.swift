@@ -67,7 +67,8 @@ public enum Deconvolver {
             throw MeasurementError.recordingTooShort
         }
 
-        guard let chirpArrival = findChirp(in: recording, reference: stimulus.chirp) else {
+        guard let chirpArrival = findChirp(in: recording, reference: stimulus.chirp,
+                                          sampleRate: sr) else {
             throw MeasurementError.testSignalNotDetected
         }
 
@@ -121,38 +122,16 @@ public enum Deconvolver {
 
     // MARK: - Steps
 
-    /// Locate the timing chirp by matched filtering.
+    /// Locate the timing chirp.
     ///
-    /// Takes the *first* correlation peak that stands well clear of the background, not the
-    /// largest one. Two things make the largest peak the wrong choice: the stimulus deliberately
-    /// contains a second, identical chirp at the end, so whichever of the two happens to
-    /// correlate a hair higher would win at random; and a strong early reflection can outrank
-    /// the direct arrival. The first qualifying peak is the direct sound, which is what t=0 means.
-    ///
-    /// Returns nil when nothing stands clear of the background, which is what "could not detect
-    /// test signal" means in practice.
-    static func findChirp(in recording: [Float], reference: [Float]) -> Int? {
-        let reversed = [Float](reference.reversed())
-        let correlation = linearConvolve(recording, reversed)
-        guard let strongest = peakIndex(of: correlation) else { return nil }
-
-        let peakValue = abs(correlation[strongest])
-        let rms = sqrt(vDSP.meanSquare(correlation))
-        guard rms > 0, peakValue / rms > 8 else { return nil }
-
-        // First crossing of half the strongest peak, then the local maximum around it.
-        let threshold = peakValue * 0.5
-        guard let firstCrossing = correlation.firstIndex(where: { abs($0) >= threshold }) else {
-            return nil
-        }
-        let searchEnd = Swift.min(correlation.count, firstCrossing + reference.count)
-        var peak = firstCrossing
-        for i in firstCrossing..<searchEnd where abs(correlation[i]) > abs(correlation[peak]) {
-            peak = i
-        }
-
-        let arrival = peak - (reference.count - 1)
-        return arrival >= 0 ? arrival : nil
+    /// Shares the sharpness test the live detector uses, so what the app listens for while
+    /// waiting and what the analysis later locks onto are the same thing. Returns nil when
+    /// nothing in the recording compresses like a chirp, which is what "could not detect test
+    /// signal" means in practice.
+    static func findChirp(in recording: [Float], reference: [Float],
+                          sampleRate: Double = 48_000) -> Int? {
+        ChirpMatch.arrival(of: reference, in: recording, sampleRate: sampleRate,
+                           threshold: 8)?.index
     }
 
     /// Zero-padded FFT convolution.
@@ -234,7 +213,8 @@ public enum Deconvolver {
         let searchFrom = firstChirpAt + stimulus.chirpToChirp - Int(0.5 * stimulus.config.sampleRate)
         guard searchFrom > 0, searchFrom < recording.count else { return nil }
         let tail = Array(recording[searchFrom...])
-        guard let offset = findChirp(in: tail, reference: stimulus.chirp) else { return nil }
+        guard let offset = findChirp(in: tail, reference: stimulus.chirp,
+                                     sampleRate: stimulus.config.sampleRate) else { return nil }
 
         let measured = (searchFrom + offset) - firstChirpAt
         let expected = stimulus.chirpToChirp

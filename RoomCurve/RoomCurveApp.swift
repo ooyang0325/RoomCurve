@@ -26,7 +26,10 @@ struct RoomCurveApp: App {
             // Push the screen onto a real stack rooted at the menu, so Back behaves exactly
             // as it does when you navigate there yourself.
             DemoLaunch.Root(screen: screen)
-                .onAppear { if state.captures.isEmpty { DemoLaunch.seed(state) } }
+                                .onAppear {
+                    if state.captures.isEmpty { DemoLaunch.seed(state) }
+                    DemoLaunch.seedStore(store, state: state)
+                }
         } else {
             MenuView()
         }
