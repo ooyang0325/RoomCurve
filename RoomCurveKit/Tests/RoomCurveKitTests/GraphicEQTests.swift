@@ -66,6 +66,36 @@ struct GraphicEQTests {
         #expect(fit.clipped)
     }
 
+    @Test("a finer step fits more closely")
+    func finerStepFitsBetter() {
+        let wanted = target([
+            Biquad(type: .peaking, frequency: 160, gainDB: -5, q: 2),
+            Biquad(type: .peaking, frequency: 2_000, gainDB: 3.5, q: 1.5)
+        ])
+        func error(step: Double) -> Double {
+            var eq = GraphicEQ.tenBand
+            eq.stepDB = step
+            return GraphicEQFitter.fit(targetDB: wanted, to: eq).rmsErrorDB
+        }
+        // Coarse steps quantise away detail the bands could otherwise reach.
+        #expect(error(step: 0.1) <= error(step: 1.0) + 1e-9)
+        #expect(error(step: 1.0) <= error(step: 3.0) + 1e-9)
+    }
+
+    @Test("lands on tenth-of-a-dB steps when asked")
+    func tenthOfADecibelStep() {
+        let wanted = target([Biquad(type: .peaking, frequency: 400, gainDB: 4.35, q: 1.5)])
+        var eq = GraphicEQ.tenBand
+        eq.stepDB = 0.1
+        let fit = GraphicEQFitter.fit(targetDB: wanted, to: eq)
+
+        for gain in fit.gains {
+            #expect(abs((gain * 10).rounded() / 10 - gain) < 1e-9)
+        }
+        // A tenth of a dB is fine enough to be limited by the bands, not the step.
+        #expect(fit.rmsErrorDB < 1.0)
+    }
+
     @Test("handles any band count, from three to fifty")
     func arbitraryBandCounts() {
         let wanted = target([Biquad(type: .peaking, frequency: 200, gainDB: -5, q: 1.5)])

@@ -48,6 +48,7 @@ struct ExportFormat: Identifiable, Hashable {
 
 struct ExportView: View {
     let filterSet: FilterSet
+    var initialFormat: String?
     @EnvironmentObject private var store: Store
     @Environment(\.dismiss) private var dismiss
 
@@ -63,6 +64,9 @@ struct ExportView: View {
     @State private var minGain = -12.0
     @State private var maxGain = 12.0
     @State private var step = 1.0
+    @State private var fitted: GraphicEQFit?
+    @State private var previewLow = ResponsePlot.defaultLow
+    @State private var previewHigh = ResponsePlot.defaultHigh
 
     var body: some View {
         NavigationStack {
@@ -143,6 +147,21 @@ struct ExportView: View {
                 }
             }
             .sheet(item: $sharing) { ShareSheet(items: [$0.url]) }
+            .onAppear {
+                if let initialFormat,
+                   let match = ExportFormat.all.first(where: { $0.id == initialFormat }) {
+                    format = match
+                }
+            }
+            .task(id: fitKey) {
+                guard format.id == "graphic" else { return }
+                fitted = GraphicEQFitter.fit(targetDB: correctionDB, to: graphicEQ)
+            }
+            .onChange(of: format) { _, new in
+                if new.id == "graphic", fitted == nil {
+                    fitted = GraphicEQFitter.fit(targetDB: correctionDB, to: graphicEQ)
+                }
+            }
         }
     }
 
@@ -160,8 +179,42 @@ struct ExportView: View {
                          minGainDB: minGain, maxGainDB: maxGain, stepDB: step)
     }
 
+    private var correctionDB: [Double] { filterSet.active.combinedResponseDB() }
+
+    /// Identity of everything the fit depends on, so it is recomputed exactly when it changes.
+    private var fitKey: String {
+        "\(custom)|\(preset.name)|\(frequencyText)|\(minGain)|\(maxGain)|\(step)"
+    }
+
     private var fit: GraphicEQFit {
-        GraphicEQFitter.fit(targetDB: filterSet.active.combinedResponseDB(), to: graphicEQ)
+        fitted ?? GraphicEQFitter.fit(targetDB: correctionDB, to: graphicEQ)
+    }
+
+    /// What the equaliser will actually do, against what was asked for.
+    ///
+    /// A graphic equaliser with few bands cannot follow a parametric correction closely, and
+    /// the numbers alone do not show where it gives up. Seeing the two curves together does.
+    @ViewBuilder
+    private var preview: some View {
+        let result = fit
+        ResponsePlot(
+            series: [
+                PlotSeries(id: "target", values: result.targetDB, color: .yellow,
+                           lineWidth: 2.5),
+                PlotSeries(id: "achieved", values: result.achievedDB, color: .cyan,
+                           lineWidth: 2.5)
+            ],
+            kind: .magnitude, grid: .standard,
+            lowFrequency: $previewLow, highFrequency: $previewHigh)
+        .frame(height: 200)
+        .listRowInsets(EdgeInsets(top: 8, leading: 4, bottom: 8, trailing: 4))
+
+        HStack(spacing: 14) {
+            Label("Wanted", systemImage: "minus").foregroundStyle(.yellow)
+            Label("This equaliser", systemImage: "minus").foregroundStyle(.cyan)
+        }
+        .font(.caption)
+        .labelStyle(.titleAndIcon)
     }
 
     @ViewBuilder
@@ -189,6 +242,7 @@ struct ExportView: View {
                 Stepper(String(format: "Highest: %+.0f dB", maxGain),
                         value: $maxGain, in: 1...40, step: 1)
                 Picker("Step", selection: $step) {
+                    Text("0.1 dB").tag(0.1)
                     Text("0.5 dB").tag(0.5)
                     Text("1 dB").tag(1.0)
                     Text("2 dB").tag(2.0)
@@ -200,6 +254,10 @@ struct ExportView: View {
                 Text("Separate the frequencies with commas. Any number of bands works — five "
                      + "on a portable player, thirty-one on a rack unit.")
             }
+        }
+
+        Section("Preview") {
+            preview
         }
 
         Section {
