@@ -4,12 +4,16 @@ import RoomCurveKit
 struct EqualizeView: View {
     @EnvironmentObject private var store: Store
     @EnvironmentObject private var state: AppState
+    @EnvironmentObject private var audio: AudioEngine
 
     @State private var low = ResponsePlot.defaultLow
     @State private var high = ResponsePlot.defaultHigh
     @State private var source: SavedMeasurement?
     @State private var measured: FrequencyResponse?
     @State private var correction: Correction?
+    @State private var validation: FrequencyResponse?
+    @State private var validating = false
+    @State private var validationTask: Task<Void, Never>?
     @State private var showSettings = false
     @State private var showFilters = false
     @State private var showExport = false
@@ -57,6 +61,7 @@ struct EqualizeView: View {
                 } label: {
                     Image(systemName: "folder")
                 }
+                .disabled(validating)
             }
         }
         .sheet(isPresented: $showSettings) {
@@ -77,6 +82,7 @@ struct EqualizeView: View {
             }
         }
         .onAppear { if source == nil { source = store.measurements.first; load() } }
+        .onDisappear { validationTask?.cancel(); audio.stop() }
     }
 
     private var measurementMenu: some View {
@@ -94,12 +100,13 @@ struct EqualizeView: View {
             stat("Max boost", String(format: "%.1f dB", correction?.maxBoostDB ?? 0),
                  warn: (correction?.maxBoostDB ?? 0) > state.eqSettings.maxGainDB + 0.01)
             stat("Preamp", String(format: "%.1f dB", correction?.preampDB ?? 0))
+            stat("Validated", validation == nil ? "—" : "✓")
         }
         .padding(.horizontal)
         .padding(.top, 4)
     }
 
-    /// The same three numbers as the portrait summary, on one line and tucked into a corner
+    /// The same numbers as the portrait summary, on one line and tucked into a corner
     /// where they do not sit on top of the traces.
     private var compactSummary: some View {
         HStack(spacing: 10) {
@@ -108,6 +115,7 @@ struct EqualizeView: View {
                 .foregroundStyle((correction?.maxBoostDB ?? 0) > state.eqSettings.maxGainDB + 0.01
                                  ? .red : .secondary)
             Text(String(format: "preamp %.1f dB", correction?.preampDB ?? 0))
+            if validation != nil { Text("green = measured") }
         }
         .font(.caption.monospacedDigit())
         .foregroundStyle(.secondary)
@@ -138,12 +146,28 @@ struct EqualizeView: View {
                     Image(systemName: "gearshape").font(.body).frame(width: 30, height: 30)
                 }
                 .secondaryAction()
+                .disabled(validating)
 
                 Button { showFilters = true } label: {
                     Image(systemName: "list.number").font(.body).frame(width: 30, height: 30)
                 }
                 .secondaryAction()
+                .disabled(validating || (correction?.filters.isEmpty ?? true))
+
+                Button { validating ? cancelValidation() : validate() } label: {
+                    Group {
+                        if validating {
+                            ProgressView()
+                        } else {
+                            Image(systemName: "checkmark.circle")
+                        }
+                    }
+                    .font(.body)
+                    .frame(width: 30, height: 30)
+                }
+                .secondaryAction()
                 .disabled(correction?.filters.isEmpty ?? true)
+                .accessibilityLabel(validating ? "Stop validation" : "Validate with sweep")
 
                 Button { showExport = true } label: {
                     if isShort {
@@ -157,7 +181,7 @@ struct EqualizeView: View {
                     }
                 }
                 .prominentAction()
-                .disabled(correction?.filters.isEmpty ?? true)
+                .disabled(validating || (correction?.filters.isEmpty ?? true))
             }
             .floatingBar(vertical: isShort)
         }
@@ -179,6 +203,11 @@ struct EqualizeView: View {
             result.append(PlotSeries(id: "predicted", values: correction.predictedDB,
                                      color: .cyan, lineWidth: 2.5,
                                      blanked: state.blanked(for: measured)))
+        }
+        if let validation {
+            result.append(PlotSeries(id: "validated", values: validation.magnitudeDB,
+                                     color: .green, lineWidth: 3,
+                                     blanked: state.blanked(for: validation)))
         }
         return result
     }
@@ -208,11 +237,57 @@ struct EqualizeView: View {
 
     private func recompute() {
         guard let measured else { return }
+        validation = nil
         correction = AutoEQ.correct(measuredDB: measured.magnitudeDB,
                                     targetDB: fittedTarget,
                                     snrDB: measured.snrDB,
                                     settings: state.eqSettings,
                                     grid: state.grid)
+    }
+
+    private func validate() {
+        guard let correction else { return }
+        validating = true
+        validation = nil
+
+        validationTask = Task {
+            defer { validating = false }
+            do {
+                var config = state.sweepConfig
+                config.sampleRate = audio.sampleRate
+                let stimulus = SweepGenerator.make(config)
+                let recording = try await audio.measure(
+                    stimulus: stimulus,
+                    chirpChannel: state.chirpChannel,
+                    sweepChannel: state.sweepChannel,
+                    filters: correction.filters,
+                    preampDB: correction.preampDB)
+                guard !Task.isCancelled else { return }
+
+                let ir = try Deconvolver.analyse(
+                    recording: recording, stimulus: stimulus, removeDelay: state.removeDelay)
+                let response = state.calibrated(Analyser.response(of: ir), store: store)
+                    .smoothed(state.smoothing)
+
+                // The preamp is deliberate headroom, not part of the correction shape.
+                validation = FrequencyResponse(
+                    grid: response.grid,
+                    magnitudeDB: response.magnitudeDB.map { $0 - correction.preampDB },
+                    phaseDegrees: response.phaseDegrees,
+                    groupDelayMS: response.groupDelayMS,
+                    snrDB: response.snrDB)
+            } catch is CancellationError {
+                // The user stopped it.
+            } catch {
+                state.errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func cancelValidation() {
+        validationTask?.cancel()
+        audio.stop()
+        validating = false
     }
 }
 

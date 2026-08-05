@@ -85,6 +85,19 @@ struct BiquadTests {
         }
     }
 
+    @Test("sample processing matches the calculated frequency response")
+    func processesSamples() {
+        let filter = Biquad(type: .peaking, frequency: 1_000, gainDB: 6, q: 2)
+        let samples = (0..<48_000).map {
+            Float(sin(2 * Double.pi * 1_000 * Double($0) / sampleRate))
+        }
+        let output = [filter].process(samples, sampleRate: sampleRate)
+        let inputRMS = rms(Array(samples.dropFirst(4_800)))
+        let outputRMS = rms(Array(output.dropFirst(4_800)))
+
+        #expect(abs(20 * log10(outputRMS / inputRMS) - 6) < 0.01)
+    }
+
     @Test("Q and octave bandwidth convert both ways")
     func bandwidthConversion() {
         for q in [0.5, 0.707, 1.41, 4.0, 10.0] {
@@ -105,5 +118,9 @@ struct BiquadTests {
 
         let highFreq = Biquad(type: .peaking, frequency: 5_000, gainDB: 6, q: 10).decayTime60dB
         #expect(highFreq < highQ)
+    }
+
+    private func rms(_ samples: [Float]) -> Double {
+        (samples.reduce(0) { $0 + Double($1 * $1) } / Double(samples.count)).squareRoot()
     }
 }

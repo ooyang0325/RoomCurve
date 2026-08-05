@@ -212,17 +212,20 @@ final class AudioEngine: ObservableObject {
 
     // MARK: - Measurement
 
-    /// Play the stimulus and record the result.
+    /// Play the stimulus and record the result, optionally filtering the sweep for validation.
     ///
     /// Only used when the app itself is driving playback, so the timing is known. When the
     /// signal comes from somewhere else, `startListening()` is used instead — there is no
     /// sensible fixed window when a person has to walk over and press play.
     func measure(stimulus: SweepStimulus,
                  chirpChannel: OutputChannel = .both,
-                 sweepChannel: OutputChannel = .both) async throws -> [Float] {
+                 sweepChannel: OutputChannel = .both,
+                 filters: [Biquad] = [],
+                 preampDB: Double = 0) async throws -> [Float] {
         let duration = Double(stimulus.samples.count) / stimulus.config.sampleRate
         let signal = stereoBuffer(for: stimulus, chirpChannel: chirpChannel,
-                                  sweepChannel: sweepChannel)
+                                  sweepChannel: sweepChannel, filters: filters,
+                                  preampDB: preampDB)
         // A little longer than the signal, to cover wireless playback latency.
         return try await run(playing: signal, listeningFor: duration + 3)
     }
@@ -336,7 +339,9 @@ final class AudioEngine: ObservableObject {
     /// the speaker being measured.
     private func stereoBuffer(for stimulus: SweepStimulus,
                               chirpChannel: OutputChannel,
-                              sweepChannel: OutputChannel) -> AVAudioPCMBuffer? {
+                              sweepChannel: OutputChannel,
+                              filters: [Biquad] = [],
+                              preampDB: Double = 0) -> AVAudioPCMBuffer? {
         guard let format = AVAudioFormat(standardFormatWithSampleRate: stimulus.config.sampleRate,
                                          channels: 2),
               let buffer = AVAudioPCMBuffer(
@@ -345,18 +350,30 @@ final class AudioEngine: ObservableObject {
               let channels = buffer.floatChannelData else { return nil }
 
         buffer.frameLength = AVAudioFrameCount(stimulus.samples.count)
-        let sweepEnd = stimulus.sweepStart + stimulus.sweepLength
         let chirpEnd = stimulus.chirpStart + stimulus.chirp.count
         let closingEnd = stimulus.closingChirpStart + stimulus.chirp.count
+        let sweepRegion = stimulus.sweepStart..<stimulus.closingChirpStart
+        let preamp = Float(pow(10, preampDB / 20))
 
         for channel in 0..<2 {
+            let channelFilters = filters.filter {
+                $0.channel == .both
+                    || ($0.channel == .left && channel == 0)
+                    || ($0.channel == .right && channel == 1)
+            }
+            let filtered = channelFilters.process(
+                Array(stimulus.samples[sweepRegion]), sampleRate: stimulus.config.sampleRate)
+
             for i in 0..<stimulus.samples.count {
                 let isChirp = (i >= stimulus.chirpStart && i < chirpEnd)
                     || (i >= stimulus.closingChirpStart && i < closingEnd)
-                let isSweep = i >= stimulus.sweepStart && i < sweepEnd
+                let isSweepOrDecay = sweepRegion.contains(i)
                 let wanted = isChirp ? chirpChannel.carries(channel)
-                    : isSweep ? sweepChannel.carries(channel) : true
-                channels[channel][i] = wanted ? stimulus.samples[i] : 0
+                    : isSweepOrDecay ? sweepChannel.carries(channel) : true
+                let sample = isSweepOrDecay
+                    ? filtered[i - stimulus.sweepStart] * preamp
+                    : stimulus.samples[i]
+                channels[channel][i] = wanted ? sample : 0
             }
         }
         return buffer
