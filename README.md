@@ -12,7 +12,7 @@ the maths, AVFoundation for audio, SwiftUI and Swift Charts for the interface.
 |---|---|
 | **Sweep** | Logarithmic sine sweep, deconvolved to an impulse response. Magnitude, phase and group delay. |
 | **Real Time** | Pink-noise analyser. Live, or a long average for walking the mic around the room. |
-| **Equalize** | Generates parametric or FIR correction towards a target curve. |
+| **Equalize** | Generates parametric or FIR correction towards a target curve, then validates it with a measured sweep. |
 | **Curve Editor** | Drag points to shape a target curve, or paste the numbers in. |
 | **Measurements** | Saved impulse responses, target curves and microphone calibrations. |
 

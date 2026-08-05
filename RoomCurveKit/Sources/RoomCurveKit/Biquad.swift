@@ -118,6 +118,21 @@ public struct BiquadCoefficients: Sendable, Equatable {
         guard denominator > 0 else { return 0 }
         return 20 * Foundation.log10(numerator / denominator)
     }
+
+    /// Run these coefficients over a signal using the difference equation documented above.
+    public func process(_ samples: [Float]) -> [Float] {
+        var output = [Float](repeating: 0, count: samples.count)
+        var x1 = 0.0, x2 = 0.0, y1 = 0.0, y2 = 0.0
+
+        for i in samples.indices {
+            let x = Double(samples[i])
+            let y = b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2
+            output[i] = Float(y)
+            x2 = x1; x1 = x
+            y2 = y1; y1 = y
+        }
+        return output
+    }
 }
 
 public extension Biquad {
@@ -180,5 +195,12 @@ public extension Array where Element == Biquad {
             for i in 0..<grid.count { total[i] += response[i] }
         }
         return total
+    }
+
+    /// Apply the same RBJ cascade exported to a parametric equaliser.
+    func process(_ samples: [Float], sampleRate: Double) -> [Float] {
+        reduce(samples) { signal, filter in
+            filter.enabled ? filter.coefficients(sampleRate: sampleRate).process(signal) : signal
+        }
     }
 }
